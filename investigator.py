@@ -21,14 +21,16 @@ try:
 except Exception:
     geolocator = None
 
+
 @st.cache_resource
 def load_object_detector():
     try:
-        # Lightweight open-source Object Detection pipeline
-        return pipeline("object-detection", model="facebook/detr-resnet-50")
-    except Exception:
+        # Swapping to a highly efficient, lightweight image classification model (approx 10-20MB)
+        return pipeline("image-classification", model="timm/mobilenetv3_large_100.ra_in1k")
+    except Exception as e:
+        # Print the exact error to Streamlit's hidden log for debugging
+        print(f"Model Load Error: {e}")
         return None
-
 detector = load_object_detector()
 
 st.set_page_config(page_title="JANUS - ADIE Pro Ultra", page_icon="🔍", layout="centered")
@@ -100,25 +102,23 @@ def investigate_file(file_data, file_name):
             exif_data = img._getexif()
             
             # --- 1. CONTEXT ARCHITECTURE (WHAT IS IN THE IMAGE) ---
+            # --- 1. CONTEXT ARCHITECTURE (WHAT IS IN THE IMAGE) ---
             st.markdown("### 👁️ Contextual Object Detection (AI Scan)")
             if detector:
                 with st.spinner("Analyzing elements inside the photo..."):
                     predictions = detector(img)
                     if predictions:
-                        detected_items = {}
                         for item in predictions:
                             label = item['label']
-                            detected_items[label] = detected_items.get(label, 0) + 1
-                        
-                        # Render findings cleanly
-                        for item_name, count in detected_items.items():
-                            st.write(f" * Found **{count}x {item_name}**")
-                            if "sign" in item_name or "traffic" in item_name:
+                            score = item['score'] * 100
+                            st.write(f" * Found **{label}** ({score:.1f}% confidence)")
+                            
+                            if any(x in label.lower() for x in ["sign", "traffic", "street", "pole"]):
                                 st.warning("📌 **Verification Alert:** Potential traffic/road markers detected. Inspect visual frames closely for regional fonts or regulatory shields.")
                     else:
                         st.write("No distinct standard objects indexed by AI pipeline.")
             else:
-                st.write("AI Computer Vision Engine offline.")
+                st.write("AI Computer Vision Engine offline. Check your Streamlit console logs for memory or installation exceptions.")
 
             # --- 2. CELESTIAL ANALYSIS (SUN ANGLE & SHADOWS) ---
             st.markdown("### ☀️ Celestial Surroundings Analysis")
