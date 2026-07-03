@@ -8,17 +8,33 @@ from PIL import Image, ImageChops, ImageEnhance
 from PIL.ExifTags import TAGS, GPSTAGS
 from geopy.geocoders import Nominatim
 
-# Initialize geolocator safely
+# NEW FORENSIC LIBRARIES
+from transformers import pipeline
+import torch
+import pvlib
+import pandas as pd
+
+# Initialize models and geolocator safely
 try:
-    geolocator = Nominatim(user_agent="janus_adie_investigator_v2")
+    geolocator = Nominatim(user_agent="janus_adie_investigator_v3")
 except Exception:
     geolocator = None
 
-st.set_page_config(page_title="JANUS - ADIE Pro", page_icon="🔍", layout="centered")
-st.title("🔍 JANUS - Advanced Deep Intelligence Engine")
-st.subheader("Forensic-Grade Investigator Module")
+@st.cache_resource
+def load_object_detector():
+    try:
+        # Lightweight open-source Object Detection pipeline
+        return pipeline("object-detection", model="facebook/detr-resnet-50")
+    except Exception:
+        return None
 
-uploaded_file = st.file_uploader("Upload target file for forensic deep scan...", type=None)
+detector = load_object_detector()
+
+st.set_page_config(page_title="JANUS - ADIE Pro Ultra", page_icon="🔍", layout="centered")
+st.title("🔍 JANUS - Advanced Deep Intelligence Engine")
+st.subheader("Surroundings & Environmental Forensic Module")
+
+uploaded_file = st.file_uploader("Upload target file for environmental scene scan...", type=None)
 
 def get_gps_info(exif_data):
     gps_info = {}
@@ -55,46 +71,20 @@ def get_lat_lon(gps_info):
     except Exception:
         return None, None
 
-def format_exif_date(raw_date):
-    if not raw_date:
-        return "Unknown"
+def calculate_sun_position(lat, lon, dt_object):
+    """Calculates the exact sun angle based on coordinates and timestamps."""
     try:
-        dt_obj = datetime.strptime(str(raw_date).strip(), "%Y:%m:%d %H:%M:%S")
-        return dt_obj.strftime("%d/%m/%Y %H:%M:%S")
+        # Ensure timezone-aware datetime for accurate solar computation
+        times = pd.DatetimeIndex([dt_object]).tz_localize('UTC')
+        solpos = pvlib.solarposition.get_solarposition(times, lat, lon)
+        azimuth = solpos['azimuth'].values[0]
+        apparent_elevation = solpos['apparent_elevation'].values[0]
+        return azimuth, apparent_elevation
     except Exception:
-        return str(raw_date)
-
-def compute_ela(img_path, quality=95):
-    """Generates Error Level Analysis (ELA) to spotlight digital manipulation."""
-    try:
-        original = Image.open(img_path).convert('RGB')
-        
-        # Resave at fixed compression quality
-        tmp_resaved = "tmp_resaved.jpg"
-        original.save(tmp_resaved, 'JPEG', quality=quality)
-        resaved_im = Image.open(tmp_resaved)
-        
-        # Calculate pixel variance
-        diff = ImageChops.difference(original, resaved_im)
-        extrema = diff.getextrema()
-        max_diff = max([ex[1] for ex in extrema])
-        if max_diff == 0:
-            max_diff = 1
-        
-        scale = 255.0 / max_diff
-        enhanced_diff = ImageEnhance.Brightness(diff).enhance(scale)
-        
-        # Cleanup
-        resaved_im.close()
-        if os.path.exists(tmp_resaved):
-            os.remove(tmp_resaved)
-            
-        return enhanced_diff
-    except Exception as e:
-        return None
+        return None, None
 
 def investigate_file(file_data, file_name):
-    st.markdown(f"### --- Forensic Dossier: `{file_name}` ---")
+    st.markdown(f"### --- Environmental Scene Analysis: `{file_name}` ---")
     
     with open(file_name, "wb") as f:
         f.write(file_data.getbuffer())
@@ -108,125 +98,78 @@ def investigate_file(file_data, file_name):
             img = Image.open(file_name)
             exif_data = img._getexif()
             
-            # 1. Primary Identifiers
-            make = exif_data.get(271, "Unknown") if exif_data else "Unknown"
-            model = exif_data.get(272, "Unknown") if exif_data else "Unknown"
-            date_orig = format_exif_date(exif_data.get(36867)) if exif_data else "Unknown"
+            # --- 1. CONTEXT ARCHITECTURE (WHAT IS IN THE IMAGE) ---
+            st.markdown("### 👁️ Contextual Object Detection (AI Scan)")
+            if detector:
+                with st.spinner("Analyzing elements inside the photo..."):
+                    predictions = detector(img)
+                    if predictions:
+                        detected_items = {}
+                        for item in predictions:
+                            label = item['label']
+                            detected_items[label] = detected_items.get(label, 0) + 1
+                        
+                        # Render findings cleanly
+                        for item_name, count in detected_items.items():
+                            st.write(f" * Found **{count}x {item_name}**")
+                            if "sign" in item_name or "traffic" in item_name:
+                                st.warning("📌 **Verification Alert:** Potential traffic/road markers detected. Inspect visual frames closely for regional fonts or regulatory shields.")
+                    else:
+                        st.write("No distinct standard objects indexed by AI pipeline.")
+            else:
+                st.write("AI Computer Vision Engine offline.")
+
+            # --- 2. CELESTIAL ANALYSIS (SUN ANGLE & SHADOWS) ---
+            st.markdown("### ☀️ Celestial Surroundings Analysis")
             
-            # 2. GPS Location
+            # Extract basic markers for math pipeline
+            lat, lon = None, None
             gps_raw = get_gps_info(exif_data) if exif_data else None
-            location_display = "Not Found"
             if gps_raw:
                 lat, lon = get_lat_lon(gps_raw)
-                if lat and lon:
-                    loc_name = "Unknown Location Description"
-                    if geolocator:
-                        try:
-                            location = geolocator.reverse((lat, lon), timeout=3)
-                            if location: loc_name = location.address
-                        except Exception: loc_name = "Lookup Timeout"
-                    location_display = f"{loc_name}\n({lat:.6f}, {lon:.6f})"
-
-            # Core Presentation Metrics
-            col1, col2 = st.columns(2)
-            with col1:
-                st.metric(label="📸 Camera/Phone Company", value=str(make))
-                st.metric(label="📱 Model", value=str(model))
-            with col2:
-                st.metric(label="📅 Date and Time", value=date_orig)
                 
-            st.markdown("### 📍 GPS Location")
-            st.text(location_display)
-            
-            # --- ADVANCED FORENSIC EXTRACTION ENGINE ---
-            st.markdown("### 🧬 Advanced Forensic Indicators")
-            
-            # A. Cross-Timeline Auditing
-            date_digitized = format_exif_date(exif_data.get(36868)) if exif_data else "Unknown"
-            date_modified = format_exif_date(exif_data.get(306)) if exif_data else "Unknown"
-            
-            t_col1, t_col2 = st.columns(2)
-            with t_col1:
-                st.write(f"**Digitized Timeline:** {date_digitized}")
-            with t_col2:
-                st.write(f"**Software Modification Time:** {date_modified}")
-                
-            # B. Hardware Signatures
-            serial_num = exif_data.get(42033, "Not Found") if exif_data else "Not Found"
-            lens_spec = exif_data.get(42036, "Not Found") if exif_data else "Not Found"
-            software_used = exif_data.get(305, "Camera Internal Firmware") if exif_data else "Unknown"
-            
-            st.write(f"**Device Serial Fingerprint:** `{serial_num}`")
-            st.write(f"**Lens Profile:** `{lens_spec}`")
-            st.write(f"**Software Environment:** `{software_used}`")
-            
-            # C. Hidden Embedded Thumbnail Recovery
-            if exif_data and 5097 in exif_data:
-                st.info("⚠️ Embedded EXIF Thumbnail Artifact Discovered!")
+            raw_date = exif_data.get(36867) if exif_data else None
+            dt_obj = None
+            if raw_date:
                 try:
-                    thumb_bytes = exif_data[5097]
-                    st.image(io.BytesIO(thumb_bytes), caption="Recovered Embedded Background Thumbnail", width=150)
+                    dt_obj = datetime.strptime(str(raw_date).strip(), "%Y:%m:%d %H:%M:%S")
                 except Exception:
-                    st.write("Could not render found thumbnail data block.")
-
-            # D. Adobe XMP & IPTC String Hunt
-            st.markdown("**Structural String Markers (XMP / History Trails)**")
-            xmp_found = False
-            if hasattr(img, 'info'):
-                for k, v in img.info.items():
-                    if 'xmp' in str(k).lower() or 'xml' in str(k).lower():
-                        xmp_found = True
-                        st.text_area(f"Extracted Raw Layer [{k}]", str(v)[:2000], height=150)
-            if not xmp_found:
-                st.caption("No custom structural XMP/Adobe transaction wrappers identified.")
-
-            # E. Pixel Error Level Analysis (ELA) Visualizer
-            st.markdown("**Pixel Manipulation Matrix (Error Level Analysis)**")
-            with st.spinner("Calculating pixel compression discrepancies..."):
-                ela_img = compute_ela(file_name)
-                if ela_img:
-                    st.image(ela_img, caption="ELA Output Map (Bright spots indicate non-uniform pixel saves)", use_container_width=True)
-                else:
-                    st.caption("Unable to construct ELA baseline arrays.")
-
-            # Raw Deep Dump Box
-            with st.expander("➕ More Data / Raw Metadata Dump"):
-                if exif_data:
-                    exif_dict = {str(TAGS.get(t, t)): str(v) for t, v in exif_data.items()}
-                    st.json(exif_dict)
-                else:
-                    st.write("No deep metadata tags available.")
-                    
-        except Exception as e:
-            st.error(f"Error executing forensic sequence: {e}")
+                    pass
             
-    elif zipfile.is_zipfile(file_name):
-        st.success("📦 Zip Archive Detected")
-        try:
-            with zipfile.ZipFile(file_name, 'r') as z:
-                st.metric(label="Total Contained Files", value=len(z.infolist()))
-                with st.expander("➕ More Data / File Tree Structure"):
-                    for info in z.infolist():
-                        st.code(f"File: {info.filename}\nSize: {info.file_size} bytes")
-        except Exception as e:
-            st.error(f"Error reading zip: {e}")
+            # Math execution if baseline data elements exist
+            if lat and lon and dt_obj:
+                azimuth, elevation = calculate_sun_position(lat, lon, dt_obj)
+                if azimuth and elevation:
+                    col_s1, col_s2 = st.columns(2)
+                    with col_s1:
+                        st.metric(label="🧭 Sun Azimuth Angle", value=f"{azimuth:.2f}°")
+                    with col_s2:
+                        st.metric(label="📐 Sun Elevation Angle", value=f"{elevation:.2f}°")
+                    
+                    st.info(f"💡 **Shadow Analysis:** Based on an elevation of {elevation:.2f}°, shadows will be approximately **{1 / math.tan(math.radians(max(0.1, elevation))):.2f}x** the height of any vertical object.")
+                else:
+                    st.write("Could not calculate exact angles from provided metadata.")
+            else:
+                st.error("Missing GPS coordinates or valid EXIF digital time markers to generate solar trajectory data vectors.")
 
-    elif mime_type and any(t in mime_type for t in ['text', 'javascript', 'python', 'json']):
-        st.success("📝 Code/Text File Detected")
-        try:
-            content = file_data.read().decode("utf-8", errors="ignore")
-            st.metric(label="Total Code Lines", value=len(content.splitlines()))
-            with st.expander("➕ More Data / View Source Code"):
-                st.code(content, language=mime_type.split('/')[-1])
-        except Exception as e:
-            st.error(f"Error reading text: {e}")
+            # Dynamic regional lookups for signs/surroundings
+            if gps_raw and lat and lon:
+                st.markdown("### 🗺️ Infrastructure & Regional Context")
+                loc_name = "Unknown Location Description"
+                if geolocator:
+                    try:
+                        location = geolocator.reverse((lat, lon), timeout=3)
+                        if location: 
+                            loc_name = location.address
+                            # Check address fields for infrastructure hints
+                            st.write(f"**Identified Roadway System:** {loc_name}")
+                            st.caption("Cross-reference any visible street signs against standard regional configurations matching this locality.")
+                    except Exception: 
+                        st.write("Location lookup timed out.")
 
-    else:
-        st.warning("⚠️ Unsupported format. Basic details below.")
-        with st.expander("➕ More Data / System Properties"):
-            st.write(f"Mime type: {mime_type}")
-            st.write(f"File size: {os.path.getsize(file_name)} bytes")
-        
+        except Exception as e:
+            st.error(f"Error executing forensic analysis sequence: {e}")
+            
     if os.path.exists(file_name):
         os.remove(file_name)
 
