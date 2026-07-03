@@ -10,7 +10,7 @@ from geopy.geocoders import Nominatim
 # Initialize geolocator safely
 try:
     geolocator = Nominatim(user_agent="janus_adie_investigator_v1")
-) except Exception:
+except Exception:
     geolocator = None
 
 # UI Header Configuration
