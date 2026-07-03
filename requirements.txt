@@ -1,2 +1,5 @@
 Pillow
 geopy
+transformers
+torch
+pvlib
