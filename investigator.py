@@ -14,7 +14,7 @@ import pandas as pd
 
 # 1. API Configuration & Fallback Geolocator
 API_URL = "https://api-inference.huggingface.co/models/timm/mobilenetv3_large_100.ra_in1k"
-HEADERS = {"Authorization": "Bearer YOUR_HF_TOKEN_HERE"} 
+HEADERS = {"Authorization": "Bearer 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"} 
 
 try:
     geolocator = Nominatim(user_agent="janus_adie_investigator_v3")
