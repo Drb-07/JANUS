@@ -15,7 +15,7 @@ import google.generativeai as genai
 
 # 1. Setup API Keys & State Management
 GEMINI_KEY = st.secrets.get("GEMINI_API_KEY", "AQ.Ab8RN6IHkqxad3gvwXWLK-H8qjT7UyDyseQUMxzNpXB2xm1tCA")
-if GEMINI_KEY != "YOUR_FREE_GEMINI_API_KEY_HERE":
+if GEMINI_KEY != "AQ.Ab8RN6IHkqxad3gvwXWLK-H8qjT7UyDyseQUMxzNpXB2xm1tCA":
     genai.configure(api_key=GEMINI_KEY)
 
 if "chat_history" not in st.session_state:
