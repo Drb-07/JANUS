@@ -8,10 +8,10 @@ Each engine's actual logic lives in engines/<name>.py.
 import streamlit as st
 
 from config import API_PROVIDER, MODEL_NAME
-from engines import adie, codex, auin
+from engines import adie, codex, auin, uke
 
-# Full roadmap per the JANUS product vision. Only ADIE and CODEX are real,
-# working engines today — everything else is shown honestly as planned/
+# Full roadmap per the JANUS product vision. ADIE, CODEX, AUIN, and UKE are
+# real, working engines today — the rest are shown honestly as planned/
 # in-development rather than faked, so the shell reflects the actual state
 # of the build. Add a new engine by: (1) creating engines/<name>.py with a
 # render() function, (2) adding an entry here with status="active", and
@@ -28,7 +28,7 @@ JANUS_ENGINES = [
      "status": "active"},
     {"name": "UKE", "full_name": "Universal Knowledge Engine", "icon": "📚",
      "desc": "Cross-discipline academic and professional knowledge support.",
-     "status": "roadmap"},
+     "status": "active"},
     {"name": "UKPE", "full_name": "Universal Knowledge Processing Engine", "icon": "📄",
      "desc": "Summaries, notes, flashcards, and mind maps from large document sets.",
      "status": "roadmap"},
@@ -83,10 +83,12 @@ elif selected_engine["name"] == "CODEX":
     codex.render()
 elif selected_engine["name"] == "AUIN":
     auin.render()
+elif selected_engine["name"] == "UKE":
+    uke.render()
 else:
     st.markdown(f"#### {selected_engine['icon']} {selected_engine['full_name']} _(Roadmap)_")
     st.info(
         f"**{selected_engine['name']}** is part of the JANUS product vision but isn't built yet.\n\n"
         f"Planned capability: {selected_engine['desc']}\n\n"
-        "Switch to **🔍 ADIE**, **💻 CODEX**, or **🌐 AUIN** in the sidebar to use the engines that are live today."
+        "Switch to **🔍 ADIE**, **💻 CODEX**, **🌐 AUIN**, or **📚 UKE** in the sidebar to use the engines that are live today."
     )
