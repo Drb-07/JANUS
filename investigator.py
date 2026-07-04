@@ -14,7 +14,7 @@ import numpy as np
 import google.generativeai as genai
 
 # 1. Setup API Keys & State Management
-GEMINI_KEY = st.secrets.get("GEMINI_API_KEY", "YOUR_FREE_GEMINI_API_KEY_HERE")
+GEMINI_KEY = st.secrets.get("GEMINI_API_KEY", "AQ.Ab8RN6IHkqxad3gvwXWLK-H8qjT7UyDyseQUMxzNpXB2xm1tCA")
 if GEMINI_KEY != "YOUR_FREE_GEMINI_API_KEY_HERE":
     genai.configure(api_key=GEMINI_KEY)
 
