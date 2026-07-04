@@ -1,6 +1,5 @@
 Pillow
 geopy
-transformers
-torch
 pvlib
 pandas
+requests
