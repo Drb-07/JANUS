@@ -33,10 +33,15 @@ PROVIDER_CONFIG = {
         "key_name": "OPENROUTER_API_KEY",
         "base_url": "https://openrouter.ai/api/v1",
         # Free, vision-capable model on OpenRouter's :free tier. The free
-        # catalog rotates — check https://openrouter.ai/models (filter:
-        # Price = Free, capability = vision) if this stops working.
+        # catalog rotates WITHOUT NOTICE — check https://openrouter.ai/models
+        # (filter: Price = Free, capability = vision) if all of these 404.
         "model_name_secret": "OPENROUTER_MODEL_NAME",
-        "default_model": "meta-llama/llama-4-maverick:free",
+        "default_model": "qwen/qwen2.5-vl-32b-instruct:free",
+        "fallback_models": [
+            "qwen/qwen2.5-vl-72b-instruct:free",
+            "meta-llama/llama-3.2-11b-vision-instruct:free",
+            "moonshotai/kimi-vl-a3b-thinking:free",
+        ],
     },
     "fireworks": {
         "key_name": "FIREWORKS_API_KEY",
@@ -44,6 +49,7 @@ PROVIDER_CONFIG = {
         # Check https://app.fireworks.ai/models (filter: Vision) if this 404s.
         "model_name_secret": "FIREWORKS_MODEL_NAME",
         "default_model": "accounts/fireworks/models/qwen3p7-plus",
+        "fallback_models": [],
     },
 }
 
@@ -66,6 +72,9 @@ if not API_KEY:
 # client class works for either — only base_url/key/model differ.
 client = OpenAI(api_key=API_KEY, base_url=_cfg["base_url"])
 MODEL_NAME = st.secrets.get(_cfg["model_name_secret"], _cfg["default_model"])
+# Try the configured model first, then fall back through known-good alternatives
+# if it's been rotated out of the free tier or otherwise 404s.
+CANDIDATE_MODELS = [MODEL_NAME] + [m for m in _cfg["fallback_models"] if m != MODEL_NAME]
 
 
 def pil_image_to_data_uri(pil_image, fmt="JPEG"):
@@ -189,18 +198,28 @@ if uploaded_file is not None:
                 with st.spinner("Interrogating context..."):
                     try:
                         image_data_uri = pil_image_to_data_uri(img)
-                        response = client.chat.completions.create(
-                            model=MODEL_NAME,
-                            messages=[
-                                {
-                                    "role": "user",
-                                    "content": [
-                                        {"type": "text", "text": full_prompt},
-                                        {"type": "image_url", "image_url": {"url": image_data_uri}},
+                        response = None
+                        last_error = None
+                        for candidate_model in CANDIDATE_MODELS:
+                            try:
+                                response = client.chat.completions.create(
+                                    model=candidate_model,
+                                    messages=[
+                                        {
+                                            "role": "user",
+                                            "content": [
+                                                {"type": "text", "text": full_prompt},
+                                                {"type": "image_url", "image_url": {"url": image_data_uri}},
+                                            ],
+                                        }
                                     ],
-                                }
-                            ],
-                        )
+                                )
+                                break  # success — stop trying further candidates
+                            except Exception as candidate_error:
+                                last_error = candidate_error
+                                continue  # this model unavailable/retired, try the next one
+                        if response is None:
+                            raise last_error
                         assistant_response = response.choices[0].message.content
                         st.markdown(assistant_response)
                     except Exception as e:
