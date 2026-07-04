@@ -7,3 +7,4 @@ requests
 onnxruntime
 numpy
 openai
+ddgs
