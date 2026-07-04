@@ -95,16 +95,104 @@ try:
 except Exception:
     geolocator = None
 
+# --- JANUS platform metadata ---
+# Full roadmap per the JANUS product vision. Only ADIE is a real, working
+# engine today — everything else is shown honestly as planned/in-development
+# rather than faked, so the shell reflects the actual state of the build.
+JANUS_ENGINES = [
+    {"name": "ADIE", "full_name": "Advanced Deep Intelligence Engine", "icon": "🔍",
+     "desc": "Investigates images, documents, and evidence with explainable reasoning.",
+     "status": "active"},
+    {"name": "AUIN", "full_name": "Universal Intelligence Network", "icon": "🌐",
+     "desc": "Knowledge graph across search, research papers, news, and maps.",
+     "status": "roadmap"},
+    {"name": "UKE", "full_name": "Universal Knowledge Engine", "icon": "📚",
+     "desc": "Cross-discipline academic and professional knowledge support.",
+     "status": "roadmap"},
+    {"name": "UKPE", "full_name": "Universal Knowledge Processing Engine", "icon": "📄",
+     "desc": "Summaries, notes, flashcards, and mind maps from large document sets.",
+     "status": "roadmap"},
+    {"name": "AMIE", "full_name": "Medical Intelligence Engine", "icon": "🩺",
+     "desc": "Digital twin, 3D anatomy, disease and medicine intelligence.",
+     "status": "roadmap"},
+    {"name": "CODEX", "full_name": "Software Engineering Intelligence", "icon": "💻",
+     "desc": "Code generation, architecture, debugging, security review, ROCm guidance.",
+     "status": "roadmap"},
+    {"name": "NAVIS", "full_name": "Navigation Intelligence", "icon": "🗺️",
+     "desc": "Route planning and geographic reasoning via A*/Dijkstra.",
+     "status": "roadmap"},
+    {"name": "USE", "full_name": "Universal Simulation Engine", "icon": "🧪",
+     "desc": "Interactive simulation across physics, chemistry, engineering, medicine.",
+     "status": "roadmap"},
+    {"name": "UDI", "full_name": "Universal Design Intelligence", "icon": "🏗️",
+     "desc": "Idea → requirements → 3D model → simulation → engineering report.",
+     "status": "roadmap"},
+]
+
+# Explainable AI response contract (JANUS product vision, section 9). Every
+# ADIE answer is structured this way so reasoning and confidence are always
+# visible, not just a final answer.
+EXPLAINABLE_AI_INSTRUCTIONS = """You are ADIE (Advanced Deep Intelligence Engine), the forensic investigation \
+engine inside JANUS, a Universal AI Cognitive Operating System. You provide evidence-based, explainable analysis \
+— never fabricate facts not visible in the image or given metadata.
+
+Structure your ENTIRE response using exactly these markdown section headers, in this order, every time:
+
+### 🎯 Final Answer
+A direct, concise answer to the user's request.
+
+### 📊 Confidence
+State High / Medium / Low, with a one-sentence justification.
+
+### 🧠 Reasoning
+2-4 sentences on how you reached the answer.
+
+### 🔍 Evidence
+Bullet points citing specific visual details or metadata signals that support the answer.
+
+### 🔄 Better Alternatives
+Other plausible interpretations, if any. If none, say so.
+
+### ❓ Missing Information
+What additional information/angle/metadata would improve confidence.
+
+### ➡️ Suggested Next Steps
+1-3 concrete follow-up actions the investigator could take.
+"""
+
 # UI Header Configuration
-st.set_page_config(page_title="JANUS - ADIE Chat", page_icon="🔍", layout="centered")
-st.title("🔍 JANUS - Advanced Deep Intelligence Engine")
-st.subheader("Interactive Forensic Chat Engine")
+st.set_page_config(page_title="JANUS - Cognitive OS", page_icon="🧠", layout="wide")
+
+# --- Sidebar: Core Orchestrator ---
+with st.sidebar:
+    st.markdown("## 🧠 JANUS")
+    st.caption("Universal AI Cognitive Operating System")
+    st.markdown("---")
+    st.markdown("### Core Orchestrator")
+    st.caption("Routes requests to the intelligence engine below.")
+    for engine in JANUS_ENGINES:
+        label = f"{engine['icon']} **{engine['name']}** — {engine['full_name']}"
+        if engine["status"] == "active":
+            st.success(f"{label}\n\n{engine['desc']}", icon="✅")
+        else:
+            st.markdown(
+                f"<div style='opacity:0.45; padding:6px 0;'>{label}"
+                f"<br><span style='font-size:0.85em;'>{engine['desc']}</span>"
+                f"<br><span style='font-size:0.75em;'>🚧 Roadmap</span></div>",
+                unsafe_allow_html=True,
+            )
+    st.markdown("---")
+    st.caption(f"Active backend: `{API_PROVIDER}` · `{MODEL_NAME}`")
+
+st.title("🧠 JANUS — Universal AI Cognitive Operating System")
+st.markdown("#### 🔍 ADIE — Advanced Deep Intelligence Engine _(Active)_")
+st.caption("Evidence-based forensic investigation, with full explainable reasoning on every answer.")
 
 # Initialize session state before it's used anywhere.
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
-uploaded_file = st.file_uploader("Upload target asset file for conversational interrogation...", type=None)
+uploaded_file = st.file_uploader("Upload an asset for ADIE to investigate...", type=None)
 
 # Basic Technical Metadata Helpers
 def get_gps_info(exif_data):
@@ -175,9 +263,9 @@ if uploaded_file is not None:
         gps_raw = get_gps_info(exif_data) if exif_data else None
         lat, lon = get_lat_lon(gps_raw)
 
-        # --- FORENSIC CONVERSATION PORTAL ---
+        # --- ADIE INVESTIGATION PORTAL ---
         st.markdown("### 💬 Interrogate File Content")
-        st.caption("Ask questions about surroundings, wardrobe markers, identities, or geographic hints inside the frame.")
+        st.caption("Ask ADIE about surroundings, wardrobe markers, identities, or geographic hints inside the frame. Every answer includes its reasoning, evidence, and confidence.")
 
         # Render historical messages
         for message in st.session_state.chat_history:
@@ -194,7 +282,11 @@ if uploaded_file is not None:
             if lat and lon:
                 meta_context = f"\n[System Signal - Hardware Exif Embedded Geo-Coordinates: Latitude {lat:.4f}, Longitude {lon:.4f}]"
 
-            full_prompt = f"Analyze this image from a forensic investigation standpoint. {meta_context}\nUser Request: {user_query}"
+            full_prompt = (
+                f"{EXPLAINABLE_AI_INSTRUCTIONS}\n\n"
+                f"Analyze this image from a forensic investigation standpoint.{meta_context}\n\n"
+                f"User Request: {user_query}"
+            )
 
             with st.chat_message("assistant"):
                 with st.spinner("Interrogating context..."):
@@ -225,7 +317,7 @@ if uploaded_file is not None:
                         assistant_response = response.choices[0].message.content
                         st.markdown(assistant_response)
                     except Exception as e:
-                        assistant_response = f"Chat interface compilation block: {e}. Check API deployment status keys."
+                        assistant_response = f"⚠️ ADIE engine error: {e}. Check API deployment/model status."
                         st.error(assistant_response)
 
             st.session_state.chat_history.append({"role": "assistant", "content": assistant_response})
@@ -239,7 +331,10 @@ if uploaded_file is not None:
                 st.write("No traditional metadata properties indexed inside file.")
 
     else:
-        st.warning("Conversational chat features currently optimization targeted for Image asset structures.")
+        st.warning(
+            "ADIE currently investigates image assets only. Document/PDF/video investigation is on the "
+            "JANUS roadmap (see sidebar) but not yet active."
+        )
 
     if os.path.exists(file_path):
         os.remove(file_path)
