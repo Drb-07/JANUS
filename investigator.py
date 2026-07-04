@@ -34,9 +34,13 @@ if not FIREWORKS_API_KEY:
 # works by just pointing base_url at Fireworks and using a Fireworks key.
 client = OpenAI(api_key=FIREWORKS_API_KEY, base_url="https://api.fireworks.ai/inference/v1")
 
-# Vision-capable model served on Fireworks. Swap this out for whichever
-# AMD-hardware-hosted model is announced for the program if it differs.
-FIREWORKS_MODEL_NAME = "accounts/fireworks/models/llama-v3p2-90b-vision-instruct"
+# Vision-capable model served on Fireworks. The serverless catalog rotates over
+# time, so if this 404s again, check https://app.fireworks.ai/models (filter by
+# "Vision" capability) for a currently "Ready" model. You can override this
+# without touching code by setting FIREWORKS_MODEL_NAME in st.secrets.
+# Swap this out for whichever AMD-hardware-hosted model is announced for the
+# program if/when that's revealed.
+FIREWORKS_MODEL_NAME = st.secrets.get("FIREWORKS_MODEL_NAME", "accounts/fireworks/models/qwen3p7-plus")
 
 
 def pil_image_to_data_uri(pil_image, fmt="JPEG"):
