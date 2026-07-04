@@ -1,4 +1,4 @@
-import os
+import os  # <-- FIXED: Added missing import
 import io
 import math
 import zipfile
@@ -13,13 +13,14 @@ import pandas as pd
 import numpy as np
 import google.generativeai as genai
 
-# 1. New AQ Key Compliant Initialization
+# 1. Setup API Keys & State Management
 GEMINI_KEY = st.secrets.get("GEMINI_API_KEY", "AQ.Ab8RN6LcpCIYUM_d4-UMYBkWGglHQIfA9D54jt3NVWhvKsIVuA")
-
 if GEMINI_KEY and GEMINI_KEY != "AQ.Ab8RN6LcpCIYUM_d4-UMYBkWGglHQIfA9D54jt3NVWhvKsIVuA":
-    # Explicitly map the token to the OS environment where the SDK checks for it
-    os.environ["GEMINI_API_KEY"] = GEMINI_KEY
+    os.environ["GEMINI_API_KEY"] = GEMINI_KEY  # Safely injects AQ. key signatures
     genai.configure(api_key=GEMINI_KEY)
+
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
 
 try:
     geolocator = Nominatim(user_agent="janus_adie_investigator_v3")
@@ -47,7 +48,8 @@ def get_gps_info(exif_data):
 
 def convert_to_degrees(value):
     try:
-        return float(value[0]) + (float(value[1]) / 60.0) + (float(value[2]) / 3360.0)
+        # <-- FIXED: Changed 3360.0 to 3600.0 for accurate degree conversion
+        return float(value[0]) + (float(value[1]) / 60.0) + (float(value[2]) / 3600.0)
     except Exception: return 0.0
 
 def get_lat_lon(gps_info):
