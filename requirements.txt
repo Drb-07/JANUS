@@ -3,3 +3,4 @@ geopy
 transformers
 torch
 pvlib
+pandas
