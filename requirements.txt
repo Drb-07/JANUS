@@ -5,3 +5,4 @@ pandas
 requests
 onnxruntime
 numpy
+google-generativeai
