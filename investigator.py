@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime
 import streamlit as st
 from PIL import Image, ImageChops, ImageEnhance
-from PIL.ExifTags import TAGS, GPSTAGS
+from PIL.ExifTags import TAGS, GPSTAGS, IFD
 from geopy.geocoders import Nominatim
 import pvlib
 import pandas as pd
@@ -52,15 +52,21 @@ uploaded_file = st.file_uploader("Upload target asset file for conversational in
 
 # Basic Technical Metadata Helpers
 def get_gps_info(exif_data):
-    gps_info = {}
     if not exif_data:
         return None
-    for tag, value in exif_data.items():
-        tag_name = TAGS.get(tag, tag)
-        if tag_name == "GPSInfo":
-            for gps_tag in value:
-                sub_tag_name = GPSTAGS.get(gps_tag, gps_tag)
-                gps_info[sub_tag_name] = value[gps_tag]
+    try:
+        # getexif() (unlike the legacy _getexif()) does not auto-resolve the
+        # GPSInfo tag into a dict — it's just a pointer to a sub-IFD. Use
+        # get_ifd() to explicitly pull out the parsed GPS tag dict.
+        gps_ifd = exif_data.get_ifd(IFD.GPSInfo)
+    except (KeyError, AttributeError):
+        return None
+    if not gps_ifd:
+        return None
+    gps_info = {}
+    for gps_tag, value in gps_ifd.items():
+        sub_tag_name = GPSTAGS.get(gps_tag, gps_tag)
+        gps_info[sub_tag_name] = value
     return gps_info
 
 def convert_to_degrees(value):
