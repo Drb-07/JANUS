@@ -169,22 +169,38 @@ with st.sidebar:
     st.caption("Universal AI Cognitive Operating System")
     st.markdown("---")
     st.markdown("### Core Orchestrator")
-    st.caption("Routes requests to the intelligence engine below.")
-    for engine in JANUS_ENGINES:
-        label = f"{engine['icon']} **{engine['name']}** — {engine['full_name']}"
-        if engine["status"] == "active":
-            st.success(f"{label}\n\n{engine['desc']}", icon="✅")
-        else:
-            st.markdown(
-                f"<div style='opacity:0.45; padding:6px 0;'>{label}"
-                f"<br><span style='font-size:0.85em;'>{engine['desc']}</span>"
-                f"<br><span style='font-size:0.75em;'>🚧 Roadmap</span></div>",
-                unsafe_allow_html=True,
-            )
+    st.caption("Select an engine to route to.")
+
+    engine_labels = [f"{e['icon']} {e['name']}" for e in JANUS_ENGINES]
+    selected_label = st.radio(
+        "Engine",
+        engine_labels,
+        label_visibility="collapsed",
+        key="selected_engine_label",
+    )
+    selected_engine = JANUS_ENGINES[engine_labels.index(selected_label)]
+
+    st.markdown(f"**{selected_engine['full_name']}**")
+    st.caption(selected_engine["desc"])
+    if selected_engine["status"] == "active":
+        st.success("✅ Active", icon="✅")
+    else:
+        st.warning("🚧 On the roadmap — not built yet", icon="🚧")
+
     st.markdown("---")
     st.caption(f"Active backend: `{API_PROVIDER}` · `{MODEL_NAME}`")
 
 st.title("🧠 JANUS — Universal AI Cognitive Operating System")
+
+if selected_engine["status"] != "active":
+    st.markdown(f"#### {selected_engine['icon']} {selected_engine['full_name']} _(Roadmap)_")
+    st.info(
+        f"**{selected_engine['name']}** is part of the JANUS product vision but isn't built yet.\n\n"
+        f"Planned capability: {selected_engine['desc']}\n\n"
+        "Switch to **🔍 ADIE** in the sidebar to use the engine that's live today."
+    )
+    st.stop()
+
 st.markdown("#### 🔍 ADIE — Advanced Deep Intelligence Engine _(Active)_")
 st.caption("Evidence-based forensic investigation, with full explainable reasoning on every answer.")
 
