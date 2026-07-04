@@ -13,13 +13,13 @@ import pandas as pd
 import numpy as np
 import google.generativeai as genai
 
-# 1. Setup API Keys & State Management
-GEMINI_KEY = st.secrets.get("GEMINI_API_KEY", "AQ.Ab8RN6IHkqxad3gvwXWLK-H8qjT7UyDyseQUMxzNpXB2xm1tCA")
-if GEMINI_KEY != "AQ.Ab8RN6IHkqxad3gvwXWLK-H8qjT7UyDyseQUMxzNpXB2xm1tCA":
-    genai.configure(api_key=GEMINI_KEY)
+# 1. New AQ Key Compliant Initialization
+GEMINI_KEY = st.secrets.get("GEMINI_API_KEY", "AQ.Ab8RN6LcpCIYUM_d4-UMYBkWGglHQIfA9D54jt3NVWhvKsIVuA")
 
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
+if GEMINI_KEY and GEMINI_KEY != "AQ.Ab8RN6LcpCIYUM_d4-UMYBkWGglHQIfA9D54jt3NVWhvKsIVuA":
+    # Explicitly map the token to the OS environment where the SDK checks for it
+    os.environ["GEMINI_API_KEY"] = GEMINI_KEY
+    genai.configure(api_key=GEMINI_KEY)
 
 try:
     geolocator = Nominatim(user_agent="janus_adie_investigator_v3")
