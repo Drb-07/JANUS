@@ -1,8 +1,0 @@
-Pillow
-geopy
-pvlib
-pandas
-requests
-onnxruntime
-numpy
-google-genai
