@@ -4,7 +4,6 @@ import math
 import zipfile
 import mimetypes
 from datetime import datetime
-import requests
 import streamlit as st
 from PIL import Image, ImageChops, ImageEnhance
 from PIL.ExifTags import TAGS, GPSTAGS
@@ -12,83 +11,32 @@ from geopy.geocoders import Nominatim
 import pvlib
 import pandas as pd
 import numpy as np
-import onnxruntime as ort
+import google.generativeai as genai
 
-# Safe Local Download for a tiny 4MB ONNX Model & ImageNet Labels
-MODEL_PATH = "mobilenetv2.onnx"
-LABELS_PATH = "labels.txt"
+# 1. Setup API Keys & State Management
+GEMINI_KEY = st.secrets.get("GEMINI_API_KEY", "YOUR_FREE_GEMINI_API_KEY_HERE")
+if GEMINI_KEY != "YOUR_FREE_GEMINI_API_KEY_HERE":
+    genai.configure(api_key=GEMINI_KEY)
 
-@st.cache_resource
-def download_and_load_onnx():
-    try:
-        if not os.path.exists(MODEL_PATH):
-            url = "https://github.com/onnx/models/raw/main/validated/vision/classification/mobilenet/model/mobilenetv2-7.onnx"
-            r = requests.get(url, stream=True)
-            with open(MODEL_PATH, "wb") as f:
-                f.write(r.content)
-        
-        if not os.path.exists(LABELS_PATH):
-            url = "https://raw.githubusercontent.com/pytorch/hub/master/imagenet_classes.txt"
-            r = requests.get(url)
-            with open(LABELS_PATH, "w") as f:
-                f.write(r.text)
-                
-        with open(LABELS_PATH, "r") as f:
-            labels = [line.strip() for line in f.readlines()]
-            
-        session = ort.InferenceSession(MODEL_PATH)
-        return session, labels
-    except Exception as e:
-        print(f"ONNX Initialization Error: {e}")
-        return None, None
-
-ort_session, model_labels = download_and_load_onnx()
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
 
 try:
     geolocator = Nominatim(user_agent="janus_adie_investigator_v3")
 except Exception:
     geolocator = None
 
-st.set_page_config(page_title="JANUS - ADIE Pro Ultra", page_icon="🔍", layout="centered")
+# UI Header Configuration
+st.set_page_config(page_title="JANUS - ADIE Chat", page_icon="🔍", layout="centered")
 st.title("🔍 JANUS - Advanced Deep Intelligence Engine")
-st.subheader("Surroundings & Environmental Forensic Module")
+st.subheader("Interactive Forensic Chat Engine")
 
-uploaded_file = st.file_uploader("Upload target file for environmental scene scan...", type=None)
+uploaded_file = st.file_uploader("Upload target asset file for conversational interrogation...", type=None)
 
-def preprocess_image(pil_img):
-    """Resizes and normalizes image data standardly for the ONNX tensor matrix."""
-    img = pil_img.convert("RGB").resize((224, 224))
-    img_data = np.array(img).astype(np.float32)
-    img_data = img_data.transpose(2, 0, 1) # HWC to CHW
-    mean = np.array([0.485, 0.456, 0.406]).reshape(3, 1, 1)
-    std = np.array([0.229, 0.224, 0.225]).reshape(3, 1, 1)
-    img_data = (img_data / 255.0 - mean) / std
-    return np.expand_dims(img_data, axis=0).astype(np.float32)
-
-def run_local_vision(pil_img):
-    if ort_session is None or model_labels is None:
-        return None
-    try:
-        input_data = preprocess_image(pil_img)
-        input_name = ort_session.get_inputs()[0].name
-        raw_outputs = ort_session.run(None, {input_name: input_data})[0][0]
-        
-        # Softmax computation
-        e_x = np.exp(raw_outputs - np.max(raw_outputs))
-        probabilities = e_x / e_x.sum()
-        
-        top_indices = np.argsort(probabilities)[-3:][::-1]
-        results = []
-        for idx in top_indices:
-            results.append({"label": model_labels[idx], "score": float(probabilities[idx])})
-        return results
-    except Exception:
-        return None
-
+# Basic Technical Metadata Helpers
 def get_gps_info(exif_data):
     gps_info = {}
-    if not exif_data:
-        return None
+    if not exif_data: return None
     for tag, value in exif_data.items():
         tag_name = TAGS.get(tag, tag)
         if tag_name == "GPSInfo":
@@ -99,197 +47,81 @@ def get_gps_info(exif_data):
 
 def convert_to_degrees(value):
     try:
-        d = float(value[0])
-        m = float(value[1])
-        s = float(value[2])
-        return d + (m / 60.0) + (s / 3600.0)
-    except Exception:
-        return 0.0
+        return float(value[0]) + (float(value[1]) / 60.0) + (float(value[2]) / 3360.0)
+    except Exception: return 0.0
 
 def get_lat_lon(gps_info):
-    if not gps_info or 'GPSLatitude' not in gps_info or 'GPSLongitude' not in gps_info:
-        return None, None
+    if not gps_info or 'GPSLatitude' not in gps_info or 'GPSLongitude' not in gps_info: return None, None
     try:
         lat = convert_to_degrees(gps_info['GPSLatitude'])
-        if gps_info.get('GPSLatitudeRef', 'N') != 'N':
-            lat = -lat
+        if gps_info.get('GPSLatitudeRef', 'N') != 'N': lat = -lat
         lon = convert_to_degrees(gps_info['GPSLongitude'])
-        if gps_info.get('GPSLongitudeRef', 'E') != 'E':
-            lon = -lon
+        if gps_info.get('GPSLongitudeRef', 'E') != 'E': lon = -lon
         return lat, lon
-    except Exception:
-        return None, None
+    except Exception: return None, None
 
-def format_exif_date(raw_date):
-    if not raw_date:
-        return None
-    try:
-        return datetime.strptime(str(raw_date).strip(), "%Y:%m:%d %H:%M:%S")
-    except Exception:
-        return None
-
-def calculate_sun_position(lat, lon, dt_object):
-    try:
-        times = pd.DatetimeIndex([dt_object]).tz_localize('UTC')
-        solpos = pvlib.solarposition.get_solarposition(times, lat, lon)
-        azimuth = solpos['azimuth'].values[0]
-        apparent_elevation = solpos['apparent_elevation'].values[0]
-        return azimuth, apparent_elevation
-    except Exception:
-        return None, None
-
-def compute_ela(img_path, quality=95):
-    try:
-        original = Image.open(img_path).convert('RGB')
-        tmp_resaved = "tmp_resaved.jpg"
-        original.save(tmp_resaved, 'JPEG', quality=quality)
-        resaved_im = Image.open(tmp_resaved)
-        
-        diff = ImageChops.difference(original, resaved_im)
-        extrema = diff.getextrema()
-        max_diff = max([ex[1] for ex in extrema])
-        if max_diff == 0:
-            max_diff = 1
-        
-        scale = 255.0 / max_diff
-        enhanced_diff = ImageEnhance.Brightness(diff).enhance(scale)
-        
-        resaved_im.close()
-        if os.path.exists(tmp_resaved):
-            os.remove(tmp_resaved)
-        return enhanced_diff
-    except Exception:
-        return None
-
-def investigate_file(file_data, file_name):
-    st.markdown(f"### --- Forensic Dossier: `{file_name}` ---")
+# Core Analysis Logic
+if uploaded_file is not None:
+    file_name = uploaded_file.name
     
     with open(file_name, "wb") as f:
-        f.write(file_data.getbuffer())
+        f.write(uploaded_file.getbuffer())
         
     mime_type, _ = mimetypes.guess_type(file_name)
     
     if mime_type and mime_type.startswith('image'):
-        st.image(file_data, caption="Target Image Asset", use_container_width=True)
+        st.image(uploaded_file, caption="Target Forensic Asset", use_container_width=True)
+        img = Image.open(file_name)
+        exif_data = img._getexif()
         
-        try:
-            img = Image.open(file_name)
-            exif_data = img._getexif()
-            
-            # --- 1. LOCAL EDGE COMPUTER VISION SCAN ---
-            st.markdown("### 👁️ Contextual Scene Interpretation (Local AI Scan)")
-            with st.spinner("Processing asset pixels locally..."):
-                predictions = run_local_vision(img)
+        # Pull low-level raw signals quietly for cross reference background checks
+        gps_raw = get_gps_info(exif_data) if exif_data else None
+        lat, lon = get_lat_lon(gps_raw)
+        
+        # --- FORENSIC CONVERSATION PORTAL ---
+        st.markdown("### 💬 Interrogate File Content")
+        st.caption("Ask questions about surroundings, wardrobe markers, identities, or geographic hints inside the frame.")
+        
+        # Render historical messages
+        for message in st.session_state.chat_history:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
                 
-                if predictions:
-                    for item in predictions:
-                        label = item['label']
-                        score = item['score'] * 100
-                        st.write(f" * Identified: **{label}** ({score:.1f}% confidence)")
-                        
-                        if any(x in label.lower() for x in ["sign", "traffic", "street", "junction", "pole", "pier"]):
-                            st.warning("📌 **Surroundings Warning:** Infrastructure tracking tags recognized. Examine the photograph frame for regional signage fonts or highway shield shapes.")
-                else:
-                    st.write("Vision Recognition Engine failed to compile local arrays.")
-
-            # --- 2. CELESTIAL ANALYSIS (SUN ANGLE & SHADOWS) ---
-            st.markdown("### ☀️ Celestial Surroundings Analysis")
-            lat, lon = None, None
-            gps_raw = get_gps_info(exif_data) if exif_data else None
-            if gps_raw:
-                lat, lon = get_lat_lon(gps_raw)
-                
-            raw_date = exif_data.get(36867) if exif_data else None
-            dt_obj = format_exif_date(raw_date)
+        if user_query := st.chat_input("Ex: What is the subject wearing? What country does this architecture belong to?"):
+            with st.chat_message("user"):
+                st.markdown(user_query)
+            st.session_state.chat_history.append({"role": "user", "content": user_query})
             
-            if lat and lon and dt_obj:
-                azimuth, elevation = calculate_sun_position(lat, lon, dt_obj)
-                if azimuth is not None and elevation is not None:
-                    col_s1, col_s2 = st.columns(2)
-                    with col_s1:
-                        st.metric(label="🧭 Sun Azimuth Position", value=f"{azimuth:.2f}°")
-                    with col_s2:
-                        st.metric(label="📐 Sun Elevation Position", value=f"{elevation:.2f}°")
-                    
-                    if elevation > 0:
-                        shadow_ratio = 1.0 / math.tan(math.radians(elevation))
-                        st.info(f"💡 **Forensic Shadow Assessment:** Estimated shadow length is roughly **{shadow_ratio:.2f}x** the target object's true height.")
-                    else:
-                        st.info("💡 **Temporal Note:** Calculated sun position is below the horizon array (Night capture matrix).")
-                else:
-                    st.write("Unable to compile accurate trajectory angles from metadata structures.")
-            else:
-                st.error("Missing valid internal GPS coordinates or clear EXIF timestamps to determine solar azimuth calculations.")
-
-            # --- 3. METADATA DISPLAY ---
-            st.markdown("### 📂 Baseline Metadata Summary")
-            make = exif_data.get(271, "Unknown") if exif_data else "Unknown"
-            model = exif_data.get(272, "Unknown") if exif_data else "Unknown"
-            display_date = dt_obj.strftime("%d/%m/%Y %H:%M:%S") if dt_obj else "Unknown"
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                st.metric(label="📸 Capture Hardware Manufacturer", value=str(make))
-                st.metric(label="📱 Hardware Model", value=str(model))
-            with col2:
-                st.metric(label="📅 Registered Acquisition Time", value=display_date)
-
+            # Formulate prompt inject with auxiliary background metadata signals
+            meta_context = ""
             if lat and lon:
-                st.markdown("### 📍 Location Verification Profile")
-                loc_name = "Unavailable description context"
-                if geolocator:
-                    try:
-                        location = geolocator.reverse((lat, lon), timeout=3)
-                        if location: loc_name = location.address
-                    except Exception: 
-                        loc_name = "Lookup timeout exception triggered"
-                st.text(f"{loc_name}\n({lat:.6f}, {lon:.6f})")
+                meta_context = f"\n[System Signal - Hardware Exif Embedded Geo-Coordinates: Latitude {lat:.4f}, Longitude {lon:.4f}]"
 
-            # --- 4. DEEP ARTIFACT BOX ---
-            with st.expander("➕ Deep Forensic Layers & Raw Metadata"):
-                st.markdown("**Compression Verification Matrix (Error Level Analysis)**")
-                ela_img = compute_ela(file_name)
-                if ela_img:
-                    st.image(ela_img, caption="Error Level Analysis Map", use_container_width=True)
-                
-                if exif_data:
-                    exif_dict = {str(TAGS.get(t, t)): str(v) for t, v in exif_data.items()}
-                    st.json(exif_dict)
-                else:
-                    st.write("No deep metadata structures accessible inside asset.")
-
-        except Exception as e:
-            st.error(f"Error handling deep asset extraction structure: {e}")
+            full_prompt = f"Analyze this image from a forensic investigation standpoint. {meta_context}\nUser Request: {user_query}"
             
-    elif zipfile.is_zipfile(file_name):
-        st.success("📦 Zip Archive Detected")
-        try:
-            with zipfile.ZipFile(file_name, 'r') as z:
-                st.metric(label="Total Contained Files", value=len(z.infolist()))
-                with st.expander("➕ More Data / File Tree Structure"):
-                    for info in z.infolist():
-                        st.code(f"File: {info.filename}\nSize: {info.file_size} bytes")
-        except Exception as e:
-            st.error(f"Error reading zip: {e}")
+            with st.chat_message("assistant"):
+                with st.spinner("Interrogating context..."):
+                    try:
+                        model = genai.GenerativeModel('gemini-1.5-flash')
+                        response = model.generate_content([full_prompt, img])
+                        assistant_response = response.text
+                        st.markdown(assistant_response)
+                    except Exception as e:
+                        assistant_response = f"Chat interface compilation block: {e}. Check API deployment status keys."
+                        st.error(assistant_response)
+                        
+            st.session_state.chat_history.append({"role": "assistant", "content": assistant_response})
 
-    elif mime_type and any(t in mime_type for t in ['text', 'javascript', 'python', 'json']):
-        st.success("📝 Code/Text File Detected")
-        try:
-            content = file_data.read().decode("utf-8", errors="ignore")
-            st.metric(label="Total Code Lines", value=len(content.splitlines()))
-            with st.expander("➕ More Data / View Source Code"):
-                st.code(content, language=mime_type.split('/')[-1])
-        except Exception as e:
-            st.error(f"Error reading text: {e}")
-
+        # Keep tech specs collapsed to keep interface clutter-free
+        with st.expander("🛠️ View Raw Sensor & System Properties Dump"):
+            if exif_data:
+                exif_dict = {str(TAGS.get(t, t)): str(v) for t, v in exif_data.items()}
+                st.json(exif_dict)
+            else:
+                st.write("No traditional metadata properties indexed inside file.")
+                
     else:
-        st.warning("⚠️ Unsupported format. Basic details below.")
-        with st.expander("➕ More Data / System Properties"):
-            st.write(f"Mime type: {mime_type}")
-            st.write(f"File size: {os.path.getsize(file_name)} bytes")
+        st.warning("Conversational chat features currently optimization targeted for Image asset structures.")
         
     if os.path.exists(file_name):
         os.remove(file_name)
-
-if uploaded_file is not None:
-    investigate_file(uploaded_file, uploaded_file.name)
