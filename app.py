@@ -8,7 +8,7 @@ Each engine's actual logic lives in engines/<name>.py.
 import streamlit as st
 
 from config import API_PROVIDER, MODEL_NAME
-from engines import adie, codex
+from engines import adie, codex, auin
 
 # Full roadmap per the JANUS product vision. Only ADIE and CODEX are real,
 # working engines today — everything else is shown honestly as planned/
@@ -24,8 +24,8 @@ JANUS_ENGINES = [
      "desc": "Code generation, architecture, debugging, security review, ROCm guidance.",
      "status": "active"},
     {"name": "AUIN", "full_name": "Universal Intelligence Network", "icon": "🌐",
-     "desc": "Knowledge graph across search, research papers, news, and maps.",
-     "status": "roadmap"},
+     "desc": "Live web + news search synthesized into cited, evidence-based answers.",
+     "status": "active"},
     {"name": "UKE", "full_name": "Universal Knowledge Engine", "icon": "📚",
      "desc": "Cross-discipline academic and professional knowledge support.",
      "status": "roadmap"},
@@ -81,10 +81,12 @@ if selected_engine["name"] == "ADIE":
     adie.render()
 elif selected_engine["name"] == "CODEX":
     codex.render()
+elif selected_engine["name"] == "AUIN":
+    auin.render()
 else:
     st.markdown(f"#### {selected_engine['icon']} {selected_engine['full_name']} _(Roadmap)_")
     st.info(
         f"**{selected_engine['name']}** is part of the JANUS product vision but isn't built yet.\n\n"
         f"Planned capability: {selected_engine['desc']}\n\n"
-        "Switch to **🔍 ADIE** or **💻 CODEX** in the sidebar to use the engines that are live today."
+        "Switch to **🔍 ADIE**, **💻 CODEX**, or **🌐 AUIN** in the sidebar to use the engines that are live today."
     )
