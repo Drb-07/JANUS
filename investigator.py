@@ -17,30 +17,55 @@ import base64
 from io import BytesIO
 from openai import OpenAI
 
-# --- Fireworks AI API key setup ---
+# --- AI backend setup ---
+# Two providers are supported, chosen by a single secret so you can switch
+# without touching code (e.g. once your Fireworks credits land tomorrow):
+#
+#   API_PROVIDER = "openrouter"   -> free tier, no card, rate-limited (default for now)
+#   API_PROVIDER = "fireworks"    -> paid/credited, higher limits
+#
 # NEVER hardcode API keys/secrets as fallback defaults in source code. Fail loudly
-# if the key is missing instead of silently falling back to no-auth.
-FIREWORKS_API_KEY = st.secrets.get("FIREWORKS_API_KEY", "")
+# if the required key is missing instead of silently falling back to no-auth.
+API_PROVIDER = st.secrets.get("API_PROVIDER", "openrouter").strip().lower()
 
-if not FIREWORKS_API_KEY:
+PROVIDER_CONFIG = {
+    "openrouter": {
+        "key_name": "OPENROUTER_API_KEY",
+        "base_url": "https://openrouter.ai/api/v1",
+        # Free, vision-capable model on OpenRouter's :free tier. The free
+        # catalog rotates — check https://openrouter.ai/models (filter:
+        # Price = Free, capability = vision) if this stops working.
+        "model_name_secret": "OPENROUTER_MODEL_NAME",
+        "default_model": "meta-llama/llama-4-maverick:free",
+    },
+    "fireworks": {
+        "key_name": "FIREWORKS_API_KEY",
+        "base_url": "https://api.fireworks.ai/inference/v1",
+        # Check https://app.fireworks.ai/models (filter: Vision) if this 404s.
+        "model_name_secret": "FIREWORKS_MODEL_NAME",
+        "default_model": "accounts/fireworks/models/qwen3p7-plus",
+    },
+}
+
+if API_PROVIDER not in PROVIDER_CONFIG:
+    st.error(f"Unknown API_PROVIDER '{API_PROVIDER}'. Use 'openrouter' or 'fireworks'.")
+    st.stop()
+
+_cfg = PROVIDER_CONFIG[API_PROVIDER]
+API_KEY = st.secrets.get(_cfg["key_name"], "")
+
+if not API_KEY:
     st.error(
-        "FIREWORKS_API_KEY is not set. Add it to your Streamlit secrets "
+        f"{_cfg['key_name']} is not set. Add it to your Streamlit secrets "
         "(.streamlit/secrets.toml or the Streamlit Cloud secrets manager) as:\n\n"
-        'FIREWORKS_API_KEY = "your-key-here"'
+        f'{_cfg["key_name"]} = "your-key-here"'
     )
     st.stop()
 
-# Fireworks exposes an OpenAI-compatible endpoint, so the standard OpenAI SDK
-# works by just pointing base_url at Fireworks and using a Fireworks key.
-client = OpenAI(api_key=FIREWORKS_API_KEY, base_url="https://api.fireworks.ai/inference/v1")
-
-# Vision-capable model served on Fireworks. The serverless catalog rotates over
-# time, so if this 404s again, check https://app.fireworks.ai/models (filter by
-# "Vision" capability) for a currently "Ready" model. You can override this
-# without touching code by setting FIREWORKS_MODEL_NAME in st.secrets.
-# Swap this out for whichever AMD-hardware-hosted model is announced for the
-# program if/when that's revealed.
-FIREWORKS_MODEL_NAME = st.secrets.get("FIREWORKS_MODEL_NAME", "accounts/fireworks/models/qwen3p7-plus")
+# Both Fireworks and OpenRouter expose OpenAI-compatible endpoints, so the same
+# client class works for either — only base_url/key/model differ.
+client = OpenAI(api_key=API_KEY, base_url=_cfg["base_url"])
+MODEL_NAME = st.secrets.get(_cfg["model_name_secret"], _cfg["default_model"])
 
 
 def pil_image_to_data_uri(pil_image, fmt="JPEG"):
@@ -165,7 +190,7 @@ if uploaded_file is not None:
                     try:
                         image_data_uri = pil_image_to_data_uri(img)
                         response = client.chat.completions.create(
-                            model=FIREWORKS_MODEL_NAME,
+                            model=MODEL_NAME,
                             messages=[
                                 {
                                     "role": "user",
