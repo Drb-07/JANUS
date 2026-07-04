@@ -1,6 +1,6 @@
 import os
 import io
-import math
+import math  # Explicitly defined to calculate shadow lengths
 import zipfile
 import mimetypes
 from datetime import datetime
@@ -9,28 +9,27 @@ from PIL import Image, ImageChops, ImageEnhance
 from PIL.ExifTags import TAGS, GPSTAGS
 from geopy.geocoders import Nominatim
 
-# NEW FORENSIC LIBRARIES
+# AI Core Libraries
 from transformers import pipeline
 import torch
 import pvlib
 import pandas as pd
 
-# Initialize models and geolocator safely
+# Initialize geolocator safely
 try:
     geolocator = Nominatim(user_agent="janus_adie_investigator_v3")
 except Exception:
     geolocator = None
 
-
 @st.cache_resource
 def load_object_detector():
     try:
-        # Swapping to a highly efficient, lightweight image classification model (approx 10-20MB)
+        # Lightweight classification pipeline using MobileNetV3 (Approx 22MB total payload)
         return pipeline("image-classification", model="timm/mobilenetv3_large_100.ra_in1k")
     except Exception as e:
-        # Print the exact error to Streamlit's hidden log for debugging
         print(f"Model Load Error: {e}")
         return None
+
 detector = load_object_detector()
 
 st.set_page_config(page_title="JANUS - ADIE Pro Ultra", page_icon="🔍", layout="centered")
@@ -74,10 +73,17 @@ def get_lat_lon(gps_info):
     except Exception:
         return None, None
 
+def format_exif_date(raw_date):
+    if not raw_date:
+        return None
+    try:
+        return datetime.strptime(str(raw_date).strip(), "%Y:%m:%d %H:%M:%S")
+    except Exception:
+        return None
+
 def calculate_sun_position(lat, lon, dt_object):
     """Calculates the exact sun angle based on coordinates and timestamps."""
     try:
-        # Ensure timezone-aware datetime for accurate solar computation
         times = pd.DatetimeIndex([dt_object]).tz_localize('UTC')
         solpos = pvlib.solarposition.get_solarposition(times, lat, lon)
         azimuth = solpos['azimuth'].values[0]
@@ -86,8 +92,31 @@ def calculate_sun_position(lat, lon, dt_object):
     except Exception:
         return None, None
 
+def compute_ela(img_path, quality=95):
+    try:
+        original = Image.open(img_path).convert('RGB')
+        tmp_resaved = "tmp_resaved.jpg"
+        original.save(tmp_resaved, 'JPEG', quality=quality)
+        resaved_im = Image.open(tmp_resaved)
+        
+        diff = ImageChops.difference(original, resaved_im)
+        extrema = diff.getextrema()
+        max_diff = max([ex[1] for ex in extrema])
+        if max_diff == 0:
+            max_diff = 1
+        
+        scale = 255.0 / max_diff
+        enhanced_diff = ImageEnhance.Brightness(diff).enhance(scale)
+        
+        resaved_im.close()
+        if os.path.exists(tmp_resaved):
+            os.remove(tmp_resaved)
+        return enhanced_diff
+    except Exception:
+        return None
+
 def investigate_file(file_data, file_name):
-    st.markdown(f"### --- Environmental Scene Analysis: `{file_name}` ---")
+    st.markdown(f"### --- Forensic Dossier: `{file_name}` ---")
     
     with open(file_name, "wb") as f:
         f.write(file_data.getbuffer())
@@ -101,75 +130,95 @@ def investigate_file(file_data, file_name):
             img = Image.open(file_name)
             exif_data = img._getexif()
             
-            # --- 1. CONTEXT ARCHITECTURE (WHAT IS IN THE IMAGE) ---
-            # --- 1. CONTEXT ARCHITECTURE (WHAT IS IN THE IMAGE) ---
-            st.markdown("### 👁️ Contextual Object Detection (AI Scan)")
+            # --- 1. CONTEXTUAL OBJECT DETECTION ---
+            st.markdown("### 👁️ Contextual Scene Interpretation (AI Scan)")
             if detector:
-                with st.spinner("Analyzing elements inside the photo..."):
+                with st.spinner("Analyzing structural objects inside frame..."):
                     predictions = detector(img)
                     if predictions:
                         for item in predictions:
                             label = item['label']
                             score = item['score'] * 100
-                            st.write(f" * Found **{label}** ({score:.1f}% confidence)")
+                            st.write(f" * Identified: **{label}** ({score:.1f}% confidence)")
                             
-                            if any(x in label.lower() for x in ["sign", "traffic", "street", "pole"]):
-                                st.warning("📌 **Verification Alert:** Potential traffic/road markers detected. Inspect visual frames closely for regional fonts or regulatory shields.")
+                            if any(x in label.lower() for x in ["sign", "traffic", "street", "junction", "pole"]):
+                                st.warning("📌 **Surroundings Warning:** Infrastructure tracking tags recognized. Examine the photograph frame for regional signage fonts or highway shield shapes.")
                     else:
-                        st.write("No distinct standard objects indexed by AI pipeline.")
+                        st.write("No distinct environmental assets classified.")
             else:
-                st.write("AI Computer Vision Engine offline. Check your Streamlit console logs for memory or installation exceptions.")
+                st.write("Vision Recognition Engine is loading or encountered an initialization limit.")
 
             # --- 2. CELESTIAL ANALYSIS (SUN ANGLE & SHADOWS) ---
             st.markdown("### ☀️ Celestial Surroundings Analysis")
             
-            # Extract basic markers for math pipeline
             lat, lon = None, None
             gps_raw = get_gps_info(exif_data) if exif_data else None
             if gps_raw:
                 lat, lon = get_lat_lon(gps_raw)
                 
             raw_date = exif_data.get(36867) if exif_data else None
-            dt_obj = None
-            if raw_date:
-                try:
-                    dt_obj = datetime.strptime(str(raw_date).strip(), "%Y:%m:%d %H:%M:%S")
-                except Exception:
-                    pass
+            dt_obj = format_exif_date(raw_date)
             
-            # Math execution if baseline data elements exist
             if lat and lon and dt_obj:
                 azimuth, elevation = calculate_sun_position(lat, lon, dt_obj)
-                if azimuth and elevation:
+                if azimuth is not None and elevation is not None:
                     col_s1, col_s2 = st.columns(2)
                     with col_s1:
-                        st.metric(label="🧭 Sun Azimuth Angle", value=f"{azimuth:.2f}°")
+                        st.metric(label="🧭 Sun Azimuth Position", value=f"{azimuth:.2f}°")
                     with col_s2:
-                        st.metric(label="📐 Sun Elevation Angle", value=f"{elevation:.2f}°")
+                        st.metric(label="📐 Sun Elevation Position", value=f"{elevation:.2f}°")
                     
-                    st.info(f"💡 **Shadow Analysis:** Based on an elevation of {elevation:.2f}°, shadows will be approximately **{1 / math.tan(math.radians(max(0.1, elevation))):.2f}x** the height of any vertical object.")
+                    if elevation > 0:
+                        shadow_ratio = 1.0 / math.tan(math.radians(elevation))
+                        st.info(f"💡 **Forensic Shadow Assessment:** Estimated shadow length is roughly **{shadow_ratio:.2f}x** the target object's true height.")
+                    else:
+                        st.info("💡 **Temporal Note:** Calculated sun position is below the horizon array (Night capture matrix).")
                 else:
-                    st.write("Could not calculate exact angles from provided metadata.")
+                    st.write("Unable to compile accurate trajectory angles from metadata structures.")
             else:
-                st.error("Missing GPS coordinates or valid EXIF digital time markers to generate solar trajectory data vectors.")
+                st.error("Missing valid internal GPS coordinates or clear EXIF timestamps to determine solar azimuth calculations.")
 
-            # Dynamic regional lookups for signs/surroundings
-            if gps_raw and lat and lon:
-                st.markdown("### 🗺️ Infrastructure & Regional Context")
-                loc_name = "Unknown Location Description"
+            # --- 3. METADATA DISPLAY ---
+            st.markdown("### 📂 Baseline Metadata Summary")
+            make = exif_data.get(271, "Unknown") if exif_data else "Unknown"
+            model = exif_data.get(272, "Unknown") if exif_data else "Unknown"
+            display_date = dt_obj.strftime("%d/%m/%Y %H:%M:%S") if dt_obj else "Unknown"
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric(label="📸 Capture Hardware Manufacturer", value=str(make))
+                st.metric(label="📱 Hardware Model", value=str(model))
+            with col2:
+                st.metric(label="📅 Registered Acquisition Time", value=display_date)
+
+            if lat and lon:
+                st.markdown("### 📍 Location Verification Profile")
+                loc_name = "Unavailable description context"
                 if geolocator:
                     try:
                         location = geolocator.reverse((lat, lon), timeout=3)
-                        if location: 
-                            loc_name = location.address
-                            # Check address fields for infrastructure hints
-                            st.write(f"**Identified Roadway System:** {loc_name}")
-                            st.caption("Cross-reference any visible street signs against standard regional configurations matching this locality.")
+                        if location: loc_name = location.address
                     except Exception: 
-                        st.write("Location lookup timed out.")
+                        loc_name = "Lookup timeout exception triggered"
+                st.text(f"{loc_name}\n({lat:.6f}, {lon:.6f})")
+
+            # --- 4. DEEP ARTIFACT BOX ---
+            with st.expander("➕ Deep Forensic Layers & Raw Metadata"):
+                # ELA Processing
+                st.markdown("**Compression Verification Matrix (Error Level Analysis)**")
+                ela_img = compute_ela(file_name)
+                if ela_img:
+                    st.image(ela_img, caption="Error Level Analysis Map", use_container_width=True)
+                
+                # Raw Dump
+                if exif_data:
+                    exif_dict = {str(TAGS.get(t, t)): str(v) for t, v in exif_data.items()}
+                    st.json(exif_dict)
+                else:
+                    st.write("No deep metadata structures accessible inside asset.")
 
         except Exception as e:
-            st.error(f"Error executing forensic analysis sequence: {e}")
+            st.error(f"Error handling deep asset extraction structure: {e}")
             
     if os.path.exists(file_name):
         os.remove(file_name)
