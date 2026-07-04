@@ -1,43 +1,42 @@
 import os
 import io
-import math  # Explicitly defined to calculate shadow lengths
+import math
 import zipfile
 import mimetypes
 from datetime import datetime
+import requests
 import streamlit as st
 from PIL import Image, ImageChops, ImageEnhance
 from PIL.ExifTags import TAGS, GPSTAGS
 from geopy.geocoders import Nominatim
-
-# AI Core Libraries
-from transformers import pipeline
-import torch
 import pvlib
 import pandas as pd
 
-# Initialize geolocator safely
+# 1. API Configuration & Fallback Geolocator
+API_URL = "https://api-inference.huggingface.co/models/timm/mobilenetv3_large_100.ra_in1k"
+HEADERS = {"Authorization": "Bearer YOUR_HF_TOKEN_HERE"} 
+
 try:
     geolocator = Nominatim(user_agent="janus_adie_investigator_v3")
 except Exception:
     geolocator = None
 
-@st.cache_resource
-def load_object_detector():
+def query_vision_api(image_bytes):
     try:
-        # Lightweight classification pipeline using MobileNetV3 (Approx 22MB total payload)
-        return pipeline("image-classification", model="timm/mobilenetv3_large_100.ra_in1k")
+        response = requests.post(API_URL, headers=HEADERS, data=image_bytes, timeout=10)
+        return response.json()
     except Exception as e:
-        print(f"Model Load Error: {e}")
+        print(f"API Error: {e}")
         return None
 
-detector = load_object_detector()
-
+# 2. UI Header Configuration
 st.set_page_config(page_title="JANUS - ADIE Pro Ultra", page_icon="🔍", layout="centered")
 st.title("🔍 JANUS - Advanced Deep Intelligence Engine")
 st.subheader("Surroundings & Environmental Forensic Module")
 
 uploaded_file = st.file_uploader("Upload target file for environmental scene scan...", type=None)
 
+# 3. Helper Functions
 def get_gps_info(exif_data):
     gps_info = {}
     if not exif_data:
@@ -82,7 +81,6 @@ def format_exif_date(raw_date):
         return None
 
 def calculate_sun_position(lat, lon, dt_object):
-    """Calculates the exact sun angle based on coordinates and timestamps."""
     try:
         times = pd.DatetimeIndex([dt_object]).tz_localize('UTC')
         solpos = pvlib.solarposition.get_solarposition(times, lat, lon)
@@ -115,6 +113,7 @@ def compute_ela(img_path, quality=95):
     except Exception:
         return None
 
+# 4. Core Core Analysis Pipeline
 def investigate_file(file_data, file_name):
     st.markdown(f"### --- Forensic Dossier: `{file_name}` ---")
     
@@ -130,27 +129,28 @@ def investigate_file(file_data, file_name):
             img = Image.open(file_name)
             exif_data = img._getexif()
             
-            # --- 1. CONTEXTUAL OBJECT DETECTION ---
+            # --- 1. CONTEXTUAL OBJECT DETECTION VIA API ---
             st.markdown("### 👁️ Contextual Scene Interpretation (AI Scan)")
-            if detector:
-                with st.spinner("Analyzing structural objects inside frame..."):
-                    predictions = detector(img)
-                    if predictions:
-                        for item in predictions:
-                            label = item['label']
-                            score = item['score'] * 100
-                            st.write(f" * Identified: **{label}** ({score:.1f}% confidence)")
-                            
-                            if any(x in label.lower() for x in ["sign", "traffic", "street", "junction", "pole"]):
-                                st.warning("📌 **Surroundings Warning:** Infrastructure tracking tags recognized. Examine the photograph frame for regional signage fonts or highway shield shapes.")
-                    else:
-                        st.write("No distinct environmental assets classified.")
-            else:
-                st.write("Vision Recognition Engine is loading or encountered an initialization limit.")
+            with st.spinner("Streaming asset to AI Inference Engine..."):
+                img_byte_arr = io.BytesIO()
+                img.save(img_byte_arr, format='JPEG')
+                img_bytes = img_byte_arr.getvalue()
+                
+                predictions = query_vision_api(img_bytes)
+                
+                if predictions and isinstance(predictions, list) and len(predictions) > 0 and 'label' in predictions[0]:
+                    for item in predictions:
+                        label = item['label']
+                        score = item['score'] * 100
+                        st.write(f" * Identified: **{label}** ({score:.1f}% confidence)")
+                        
+                        if any(x in label.lower() for x in ["sign", "traffic", "street", "junction", "pole"]):
+                            st.warning("📌 **Surroundings Warning:** Infrastructure tracking tags recognized. Examine the photograph frame for regional signage fonts or highway shield shapes.")
+                else:
+                    st.write("Vision Recognition Engine is initializing or sleeping. Try uploading again in a few seconds.")
 
             # --- 2. CELESTIAL ANALYSIS (SUN ANGLE & SHADOWS) ---
             st.markdown("### ☀️ Celestial Surroundings Analysis")
-            
             lat, lon = None, None
             gps_raw = get_gps_info(exif_data) if exif_data else None
             if gps_raw:
@@ -204,13 +204,11 @@ def investigate_file(file_data, file_name):
 
             # --- 4. DEEP ARTIFACT BOX ---
             with st.expander("➕ Deep Forensic Layers & Raw Metadata"):
-                # ELA Processing
                 st.markdown("**Compression Verification Matrix (Error Level Analysis)**")
                 ela_img = compute_ela(file_name)
                 if ela_img:
                     st.image(ela_img, caption="Error Level Analysis Map", use_container_width=True)
                 
-                # Raw Dump
                 if exif_data:
                     exif_dict = {str(TAGS.get(t, t)): str(v) for t, v in exif_data.items()}
                     st.json(exif_dict)
@@ -220,6 +218,33 @@ def investigate_file(file_data, file_name):
         except Exception as e:
             st.error(f"Error handling deep asset extraction structure: {e}")
             
+    elif zipfile.is_zipfile(file_name):
+        st.success("📦 Zip Archive Detected")
+        try:
+            with zipfile.ZipFile(file_name, 'r') as z:
+                st.metric(label="Total Contained Files", value=len(z.infolist()))
+                with st.expander("➕ More Data / File Tree Structure"):
+                    for info in z.infolist():
+                        st.code(f"File: {info.filename}\nSize: {info.file_size} bytes")
+        except Exception as e:
+            st.error(f"Error reading zip: {e}")
+
+    elif mime_type and any(t in mime_type for t in ['text', 'javascript', 'python', 'json']):
+        st.success("📝 Code/Text File Detected")
+        try:
+            content = file_data.read().decode("utf-8", errors="ignore")
+            st.metric(label="Total Code Lines", value=len(content.splitlines()))
+            with st.expander("➕ More Data / View Source Code"):
+                st.code(content, language=mime_type.split('/')[-1])
+        except Exception as e:
+            st.error(f"Error reading text: {e}")
+
+    else:
+        st.warning("⚠️ Unsupported format. Basic details below.")
+        with st.expander("➕ More Data / System Properties"):
+            st.write(f"Mime type: {mime_type}")
+            st.write(f"File size: {os.path.getsize(file_name)} bytes")
+        
     if os.path.exists(file_name):
         os.remove(file_name)
 
