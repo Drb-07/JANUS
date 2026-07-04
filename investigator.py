@@ -11,32 +11,80 @@ from PIL.ExifTags import TAGS, GPSTAGS
 from geopy.geocoders import Nominatim
 import pvlib
 import pandas as pd
+import numpy as np
+import onnxruntime as ort
 
-# 1. API Configuration & Fallback Geolocator
-API_URL = "https://api-inference.huggingface.co/models/timm/mobilenetv3_large_100.ra_in1k"
-HEADERS = {"Authorization": "Bearer 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"} 
+# Safe Local Download for a tiny 4MB ONNX Model & ImageNet Labels
+MODEL_PATH = "mobilenetv2.onnx"
+LABELS_PATH = "labels.txt"
+
+@st.cache_resource
+def download_and_load_onnx():
+    try:
+        if not os.path.exists(MODEL_PATH):
+            url = "https://github.com/onnx/models/raw/main/validated/vision/classification/mobilenet/model/mobilenetv2-7.onnx"
+            r = requests.get(url, stream=True)
+            with open(MODEL_PATH, "wb") as f:
+                f.write(r.content)
+        
+        if not os.path.exists(LABELS_PATH):
+            url = "https://raw.githubusercontent.com/pytorch/hub/master/imagenet_classes.txt"
+            r = requests.get(url)
+            with open(LABELS_PATH, "w") as f:
+                f.write(r.text)
+                
+        with open(LABELS_PATH, "r") as f:
+            labels = [line.strip() for line in f.readlines()]
+            
+        session = ort.InferenceSession(MODEL_PATH)
+        return session, labels
+    except Exception as e:
+        print(f"ONNX Initialization Error: {e}")
+        return None, None
+
+ort_session, model_labels = download_and_load_onnx()
 
 try:
     geolocator = Nominatim(user_agent="janus_adie_investigator_v3")
 except Exception:
     geolocator = None
 
-def query_vision_api(image_bytes):
-    try:
-        response = requests.post(API_URL, headers=HEADERS, data=image_bytes, timeout=10)
-        return response.json()
-    except Exception as e:
-        print(f"API Error: {e}")
-        return None
-
-# 2. UI Header Configuration
 st.set_page_config(page_title="JANUS - ADIE Pro Ultra", page_icon="🔍", layout="centered")
 st.title("🔍 JANUS - Advanced Deep Intelligence Engine")
 st.subheader("Surroundings & Environmental Forensic Module")
 
 uploaded_file = st.file_uploader("Upload target file for environmental scene scan...", type=None)
 
-# 3. Helper Functions
+def preprocess_image(pil_img):
+    """Resizes and normalizes image data standardly for the ONNX tensor matrix."""
+    img = pil_img.convert("RGB").resize((224, 224))
+    img_data = np.array(img).astype(np.float32)
+    img_data = img_data.transpose(2, 0, 1) # HWC to CHW
+    mean = np.array([0.485, 0.456, 0.406]).reshape(3, 1, 1)
+    std = np.array([0.229, 0.224, 0.225]).reshape(3, 1, 1)
+    img_data = (img_data / 255.0 - mean) / std
+    return np.expand_dims(img_data, axis=0).astype(np.float32)
+
+def run_local_vision(pil_img):
+    if ort_session is None or model_labels is None:
+        return None
+    try:
+        input_data = preprocess_image(pil_img)
+        input_name = ort_session.get_inputs()[0].name
+        raw_outputs = ort_session.run(None, {input_name: input_data})[0][0]
+        
+        # Softmax computation
+        e_x = np.exp(raw_outputs - np.max(raw_outputs))
+        probabilities = e_x / e_x.sum()
+        
+        top_indices = np.argsort(probabilities)[-3:][::-1]
+        results = []
+        for idx in top_indices:
+            results.append({"label": model_labels[idx], "score": float(probabilities[idx])})
+        return results
+    except Exception:
+        return None
+
 def get_gps_info(exif_data):
     gps_info = {}
     if not exif_data:
@@ -113,7 +161,6 @@ def compute_ela(img_path, quality=95):
     except Exception:
         return None
 
-# 4. Core Core Analysis Pipeline
 def investigate_file(file_data, file_name):
     st.markdown(f"### --- Forensic Dossier: `{file_name}` ---")
     
@@ -129,25 +176,21 @@ def investigate_file(file_data, file_name):
             img = Image.open(file_name)
             exif_data = img._getexif()
             
-            # --- 1. CONTEXTUAL OBJECT DETECTION VIA API ---
-            st.markdown("### 👁️ Contextual Scene Interpretation (AI Scan)")
-            with st.spinner("Streaming asset to AI Inference Engine..."):
-                img_byte_arr = io.BytesIO()
-                img.save(img_byte_arr, format='JPEG')
-                img_bytes = img_byte_arr.getvalue()
+            # --- 1. LOCAL EDGE COMPUTER VISION SCAN ---
+            st.markdown("### 👁️ Contextual Scene Interpretation (Local AI Scan)")
+            with st.spinner("Processing asset pixels locally..."):
+                predictions = run_local_vision(img)
                 
-                predictions = query_vision_api(img_bytes)
-                
-                if predictions and isinstance(predictions, list) and len(predictions) > 0 and 'label' in predictions[0]:
+                if predictions:
                     for item in predictions:
                         label = item['label']
                         score = item['score'] * 100
                         st.write(f" * Identified: **{label}** ({score:.1f}% confidence)")
                         
-                        if any(x in label.lower() for x in ["sign", "traffic", "street", "junction", "pole"]):
+                        if any(x in label.lower() for x in ["sign", "traffic", "street", "junction", "pole", "pier"]):
                             st.warning("📌 **Surroundings Warning:** Infrastructure tracking tags recognized. Examine the photograph frame for regional signage fonts or highway shield shapes.")
                 else:
-                    st.write("Vision Recognition Engine is initializing or sleeping. Try uploading again in a few seconds.")
+                    st.write("Vision Recognition Engine failed to compile local arrays.")
 
             # --- 2. CELESTIAL ANALYSIS (SUN ANGLE & SHADOWS) ---
             st.markdown("### ☀️ Celestial Surroundings Analysis")
