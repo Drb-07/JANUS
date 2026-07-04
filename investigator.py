@@ -13,7 +13,7 @@ from geopy.geocoders import Nominatim
 import pvlib
 import pandas as pd
 import numpy as np
-import google.generativeai as genai
+from google import genai
 
 # --- Gemini API key setup ---
 # NEVER hardcode API keys/secrets as fallback defaults in source code. If no key is
@@ -29,10 +29,11 @@ if not GEMINI_KEY:
     )
     st.stop()
 
-genai.configure(api_key=GEMINI_KEY)
+client = genai.Client(api_key=GEMINI_KEY)
 
-# Use a current, supported model. Gemini 1.0/1.5 models have been shut down.
-GEMINI_MODEL_NAME = "gemini-2.5-flash"
+# Use the "latest" alias so this doesn't quietly break again the next time
+# Google retires a specific model version.
+GEMINI_MODEL_NAME = "gemini-flash-latest"
 
 try:
     geolocator = Nominatim(user_agent="janus_adie_investigator_v3")
@@ -143,8 +144,10 @@ if uploaded_file is not None:
             with st.chat_message("assistant"):
                 with st.spinner("Interrogating context..."):
                     try:
-                        model = genai.GenerativeModel(GEMINI_MODEL_NAME)
-                        response = model.generate_content([full_prompt, img])
+                        response = client.models.generate_content(
+                            model=GEMINI_MODEL_NAME,
+                            contents=[full_prompt, img],
+                        )
                         assistant_response = response.text
                         st.markdown(assistant_response)
                     except Exception as e:
