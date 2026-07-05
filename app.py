@@ -3,68 +3,48 @@ JANUS — Universal AI Cognitive Operating System.
 
 This file only handles the shell: page config, sidebar "Core Orchestrator"
 engine picker, and routing to the selected engine's render() function.
-
-IMPORTANT: this file auto-discovers engines from the engines/ folder. To add
-a new working engine, you do NOT need to edit this file:
-
-    1. Create engines/<name>.py
-    2. Give it an ENGINE dict: {"name", "full_name", "icon", "desc", "order"}
-    3. Give it a render() function that draws its UI
-    4. (Optional) remove its placeholder entry from roadmap.py, if it had one
-
-That's it — this file will pick it up automatically on next run.
+Each engine's actual logic lives in engines/<name>.py.
 """
-import importlib
-import pkgutil
-
 import streamlit as st
 
-import engines
 from config import API_PROVIDER, MODEL_NAME
-from roadmap import ROADMAP_ENGINES
+from engines import adie, codex, auin, uke
 
-
-def discover_engines():
-    """Import every module in engines/ that exposes an ENGINE dict + render().
-    Modules starting with "_" are skipped (for shared helpers, not engines).
-    Returns (list_of_engine_metadata, {name: render_function}, list_of_problems)."""
-    discovered = []
-    render_fns = {}
-    problems = []
-    module_names = [m.name for m in pkgutil.iter_modules(engines.__path__) if not m.name.startswith("_")]
-
-    if not module_names:
-        problems.append(
-            "No .py files found in the engines/ folder at all. Check that engines/adie.py, "
-            "codex.py, auin.py, uke.py (etc.) actually exist in the deployed repo, in an "
-            "'engines' folder at the same level as app.py."
-        )
-
-    for module_name in module_names:
-        try:
-            module = importlib.import_module(f"engines.{module_name}")
-        except Exception as e:
-            problems.append(f"engines/{module_name}.py failed to import: {type(e).__name__}: {e}")
-            continue
-        if not hasattr(module, "ENGINE") or not hasattr(module, "render"):
-            problems.append(f"engines/{module_name}.py loaded but is missing ENGINE and/or render() — skipped.")
-            continue
-        meta = dict(module.ENGINE)
-        meta["status"] = "active"
-        discovered.append(meta)
-        render_fns[meta["name"]] = module.render
-    return discovered, render_fns, problems
-
-
-active_engines, render_fns, discovery_problems = discover_engines()
-active_names = {e["name"] for e in active_engines}
-
-# Roadmap entries only show if no real module has claimed that name yet —
-# so the moment you build a real engines/navis.py, NAVIS automatically
-# disappears from "roadmap" and appears as "active" with zero edits here.
-roadmap_engines = [dict(e, status="roadmap") for e in ROADMAP_ENGINES if e["name"] not in active_names]
-
-JANUS_ENGINES = sorted(active_engines + roadmap_engines, key=lambda e: e.get("order", 999))
+# Full roadmap per the JANUS product vision. ADIE, CODEX, AUIN, and UKE are
+# real, working engines today — the rest are shown honestly as planned/
+# in-development rather than faked, so the shell reflects the actual state
+# of the build. Add a new engine by: (1) creating engines/<name>.py with a
+# render() function, (2) adding an entry here with status="active", and
+# (3) adding a branch in the routing block at the bottom of this file.
+JANUS_ENGINES = [
+    {"name": "ADIE", "full_name": "Advanced Deep Intelligence Engine", "icon": "🔍",
+     "desc": "Investigates images, documents, and evidence with explainable reasoning.",
+     "status": "active"},
+    {"name": "CODEX", "full_name": "Software Engineering Intelligence", "icon": "💻",
+     "desc": "Code generation, architecture, debugging, security review, ROCm guidance.",
+     "status": "active"},
+    {"name": "AUIN", "full_name": "Universal Intelligence Network", "icon": "🌐",
+     "desc": "Live web + news search synthesized into cited, evidence-based answers.",
+     "status": "active"},
+    {"name": "UKE", "full_name": "Universal Knowledge Engine", "icon": "📚",
+     "desc": "Cross-discipline academic and professional knowledge support.",
+     "status": "active"},
+    {"name": "UKPE", "full_name": "Universal Knowledge Processing Engine", "icon": "📄",
+     "desc": "Summaries, notes, flashcards, and mind maps from large document sets.",
+     "status": "roadmap"},
+    {"name": "AMIE", "full_name": "Medical Intelligence Engine", "icon": "🩺",
+     "desc": "Digital twin, 3D anatomy, disease and medicine intelligence.",
+     "status": "roadmap"},
+    {"name": "NAVIS", "full_name": "Navigation Intelligence", "icon": "🗺️",
+     "desc": "Route planning and geographic reasoning via A*/Dijkstra.",
+     "status": "roadmap"},
+    {"name": "USE", "full_name": "Universal Simulation Engine", "icon": "🧪",
+     "desc": "Interactive simulation across physics, chemistry, engineering, medicine.",
+     "status": "roadmap"},
+    {"name": "UDI", "full_name": "Universal Design Intelligence", "icon": "🏗️",
+     "desc": "Idea → requirements → 3D model → simulation → engineering report.",
+     "status": "roadmap"},
+]
 
 st.set_page_config(page_title="JANUS - Cognitive OS", page_icon="🧠", layout="wide")
 
@@ -95,20 +75,20 @@ with st.sidebar:
     st.markdown("---")
     st.caption(f"Active backend: `{API_PROVIDER}` · `{MODEL_NAME}`")
 
-    if discovery_problems:
-        with st.expander(f"⚠️ Engine discovery issues ({len(discovery_problems)})"):
-            for problem in discovery_problems:
-                st.caption(f"• {problem}")
-
 st.title("🧠 JANUS — Universal AI Cognitive Operating System")
 
-if selected_engine["status"] == "active":
-    render_fns[selected_engine["name"]]()
+if selected_engine["name"] == "ADIE":
+    adie.render()
+elif selected_engine["name"] == "CODEX":
+    codex.render()
+elif selected_engine["name"] == "AUIN":
+    auin.render()
+elif selected_engine["name"] == "UKE":
+    uke.render()
 else:
-    active_list = ", ".join(f"**{e['icon']} {e['name']}**" for e in active_engines)
     st.markdown(f"#### {selected_engine['icon']} {selected_engine['full_name']} _(Roadmap)_")
     st.info(
         f"**{selected_engine['name']}** is part of the JANUS product vision but isn't built yet.\n\n"
         f"Planned capability: {selected_engine['desc']}\n\n"
-        f"Switch to one of the active engines in the sidebar to use what's live today: {active_list}."
+        "Switch to **🔍 ADIE**, **💻 CODEX**, **🌐 AUIN**, or **📚 UKE** in the sidebar to use the engines that are live today."
     )
