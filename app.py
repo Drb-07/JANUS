@@ -27,26 +27,36 @@ from roadmap import ROADMAP_ENGINES
 def discover_engines():
     """Import every module in engines/ that exposes an ENGINE dict + render().
     Modules starting with "_" are skipped (for shared helpers, not engines).
-    Returns (list_of_engine_metadata, {name: render_function})."""
+    Returns (list_of_engine_metadata, {name: render_function}, list_of_problems)."""
     discovered = []
     render_fns = {}
-    for module_info in pkgutil.iter_modules(engines.__path__):
-        module_name = module_info.name
-        if module_name.startswith("_"):
+    problems = []
+    module_names = [m.name for m in pkgutil.iter_modules(engines.__path__) if not m.name.startswith("_")]
+
+    if not module_names:
+        problems.append(
+            "No .py files found in the engines/ folder at all. Check that engines/adie.py, "
+            "codex.py, auin.py, uke.py (etc.) actually exist in the deployed repo, in an "
+            "'engines' folder at the same level as app.py."
+        )
+
+    for module_name in module_names:
+        try:
+            module = importlib.import_module(f"engines.{module_name}")
+        except Exception as e:
+            problems.append(f"engines/{module_name}.py failed to import: {type(e).__name__}: {e}")
             continue
-        module = importlib.import_module(f"engines.{module_name}")
         if not hasattr(module, "ENGINE") or not hasattr(module, "render"):
-            # Not a valid engine module (missing metadata or render()) — skip
-            # silently rather than crashing the whole app over one bad file.
+            problems.append(f"engines/{module_name}.py loaded but is missing ENGINE and/or render() — skipped.")
             continue
         meta = dict(module.ENGINE)
         meta["status"] = "active"
         discovered.append(meta)
         render_fns[meta["name"]] = module.render
-    return discovered, render_fns
+    return discovered, render_fns, problems
 
 
-active_engines, render_fns = discover_engines()
+active_engines, render_fns, discovery_problems = discover_engines()
 active_names = {e["name"] for e in active_engines}
 
 # Roadmap entries only show if no real module has claimed that name yet —
@@ -84,6 +94,11 @@ with st.sidebar:
 
     st.markdown("---")
     st.caption(f"Active backend: `{API_PROVIDER}` · `{MODEL_NAME}`")
+
+    if discovery_problems:
+        with st.expander(f"⚠️ Engine discovery issues ({len(discovery_problems)})"):
+            for problem in discovery_problems:
+                st.caption(f"• {problem}")
 
 st.title("🧠 JANUS — Universal AI Cognitive Operating System")
 
