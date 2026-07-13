@@ -1,16 +1,24 @@
 """
-AI-GC — AI Group Chat
-======================
-Discord, but every "friend" in the server is an AI agent powered by Fireworks AI.
+AI-GC — AI Group Chat (URL Invocation Version)
+==============================================
+Discord, but every "friend" in the server is an AI agent powered by OpenRouter's
+free chat models or direct Anthropic keys. 
 
-Add agents with a name + a Fireworks model link + an API key, invite them into
-the channel, then talk to them (and watch them talk to each other) using
-@mentions, exactly like a Discord server.
+Supports invoking agents instantly via URL link parameters.
 """
 
 import streamlit as st
+import json
+import requests
 
-from src.agents import Agent, make_agent, PERSONA_PRESETS
+from src.agents import (
+    Agent,
+    make_agent,
+    PERSONA_PRESETS,
+    FREE_MODEL_PRESETS,
+    CLAUDE_MODEL_PRESETS_OPENROUTER,
+    CLAUDE_MODEL_PRESETS_ANTHROPIC,
+)
 from src.engine import route_user_message
 
 st.set_page_config(
@@ -31,20 +39,43 @@ if "messages" not in st.session_state:
             "role": "system",
             "name": "system",
             "content": (
-                "Welcome to AI-GC! Add your first agent from the sidebar, then "
-                "say hi with @mentions to start the conversation."
+                "Welcome to AI-GC! Add an agent from the sidebar or via a share link, "
+                "then say hi with @mentions to start the conversation."
             ),
         }
     ]
 
 if "invited" not in st.session_state:
-    # agents currently "in the channel" (invited); lets you keep agents
-    # defined but not part of every chat
     st.session_state.invited: set[str] = set()
 
 
 # --------------------------------------------------------------------------
-# Minimal Discord-flavored CSS on top of the dark theme in .streamlit/config.toml
+# URL Query Parameter Handler (New Feature)
+# --------------------------------------------------------------------------
+# Check if someone shared a link containing a custom agent configuration
+# Example: ?name=CyberMedic&persona=A+helpful+AI+doctor&model=google/gemma-2-9b-it:free&provider=openrouter
+query_params = st.query_params
+
+if "name" in query_params:
+    url_name = query_params["name"].strip().lstrip("@")
+    url_persona = query_params.get("persona", "").strip()
+    url_model = query_params.get("model", "meta-llama/llama-3.1-8b-instruct:free").strip()
+    url_provider = query_params.get("provider", "openrouter").strip()
+    
+    # Simple check to see if this agent is already configured in the session
+    already_exists = any(a.name.lower() == url_name.lower() for a in st.session_state.agents)
+    
+    if not already_exists:
+        st.info(f"✨ Found an invitation link for @{url_name}! Provide your API key in the sidebar to summon them.")
+        # Store these parameters in temporary state to pre-populate the form
+        st.session_state["preload_name"] = url_name
+        st.session_state["preload_persona"] = url_persona
+        st.session_state["preload_model"] = url_model
+        st.session_state["preload_provider"] = url_provider
+
+
+# --------------------------------------------------------------------------
+# Minimal Discord-flavored CSS
 # --------------------------------------------------------------------------
 st.markdown(
     """
@@ -98,26 +129,81 @@ def agent_by_name(name: str) -> Agent | None:
 # --------------------------------------------------------------------------
 with st.sidebar:
     st.markdown("## 🎮 AI-GC")
-    st.caption("Your AI friends group chat, powered by Fireworks AI")
+    st.caption("Your AI friends group chat, powered by OpenRouter's free models")
 
     st.divider()
     st.markdown("### ➕ Add a new agent")
 
+    # Read preloaded configurations if pulled from a shared URL link
+    default_name = st.session_state.get("preload_name", "")
+    default_persona = st.session_state.get("preload_persona", "")
+    default_provider = st.session_state.get("preload_provider", "openrouter")
+    default_model = st.session_state.get("preload_model", "")
+
     with st.form("add_agent_form", clear_on_submit=True):
-        name = st.text_input("Name", placeholder="e.g. Nova")
-        model = st.text_input(
-            "Fireworks model link / id",
-            placeholder="accounts/fireworks/models/llama-v3p1-70b-instruct",
-            help="Any Fireworks AI chat-completions model id.",
+        name = st.text_input("Name", value=default_name, placeholder="e.g. Nova")
+
+        provider = st.radio(
+            "Provider",
+            ["openrouter", "anthropic"],
+            index=0 if default_provider == "openrouter" else 1,
+            format_func=lambda p: "OpenRouter (free models + Claude via credits)"
+            if p == "openrouter"
+            else "Anthropic directly (your own Claude API key)",
         )
-        api_key = st.text_input(
-            "Fireworks API key", type="password", placeholder="fw_..."
-        )
+
+        if provider == "openrouter":
+            model_options = {**FREE_MODEL_PRESETS, **CLAUDE_MODEL_PRESETS_OPENROUTER}
+            
+            # Match the preset dropdown if the incoming link matches a known free model
+            default_index = 0
+            if default_model in model_options.values():
+                default_index = list(model_options.values()).index(default_model) + 1
+            elif default_model:
+                default_index = 0 # Forces "Custom..." fallback
+
+            model_choice = st.selectbox(
+                "Model", 
+                ["Custom..."] + list(model_options.keys()), 
+                index=default_index
+            )
+            
+            if model_choice == "Custom...":
+                model = st.text_input(
+                    "OpenRouter model link / id",
+                    value=default_model,
+                    placeholder="meta-llama/llama-3.1-8b-instruct:free",
+                    help="Any OpenRouter chat-completions model id — browse free ones at openrouter.ai/models?max_price=0",
+                )
+            else:
+                model = model_options[model_choice]
+                st.caption(f"Model id: `{model}`")
+                
+            api_key = st.text_input(
+                "OpenRouter API key",
+                type="password",
+                placeholder="sk-or-v1-...",
+                help="Free at openrouter.ai — no credit card required for free models.",
+            )
+        else:
+            model_choice = st.selectbox(
+                "Claude model", list(CLAUDE_MODEL_PRESETS_ANTHROPIC.keys())
+            )
+            model = CLAUDE_MODEL_PRESETS_ANTHROPIC[model_choice]
+            st.caption(f"Model id: `{model}`")
+            api_key = st.text_input(
+                "Anthropic API key",
+                type="password",
+                placeholder="sk-ant-...",
+                help="From console.anthropic.com — this calls Claude directly.",
+            )
+            
         preset = st.selectbox(
             "Persona starting point (optional)",
             ["Custom"] + list(PERSONA_PRESETS.keys()),
         )
-        persona_default = "" if preset == "Custom" else PERSONA_PRESETS[preset]
+        persona_default = default_persona if default_persona else ("" if preset == "Custom" else PERSONA_PRESETS[preset])
+        
         persona = st.text_area(
             "Persona / system prompt",
             value=persona_default,
@@ -128,13 +214,18 @@ with st.sidebar:
 
         if submitted:
             try:
-                agent = make_agent(name, model, api_key, persona)
+                agent = make_agent(name, model, api_key, provider=provider, persona=persona)
                 if agent_by_name(agent.name):
                     st.error(f"An agent named '{agent.name}' already exists.")
                 else:
                     st.session_state.agents.append(agent)
                     st.session_state.invited.add(agent.id)
                     st.success(f"{agent.name} added and invited to the channel!")
+                    # Clear query state caches after adding successfully
+                    st.query_params.clear()
+                    for k in ["preload_name", "preload_persona", "preload_model", "preload_provider"]:
+                        st.session_state.pop(k, None)
+                    st.rerun()
             except ValueError as e:
                 st.error(str(e))
 
@@ -154,7 +245,7 @@ with st.sidebar:
                 )
             with cols[1]:
                 st.markdown(f"**@{a.name}**")
-                st.caption(a.model)
+                st.caption(f"{a.model}  ·  {a.provider}")
             with cols[2]:
                 if invited:
                     if st.button("Remove", key=f"kick_{a.id}"):
@@ -216,7 +307,7 @@ with chat_container:
 # Message input
 # --------------------------------------------------------------------------
 prompt = st.chat_input(
-    "Message #general  (use @AgentName to tag a friend, or @user for yourself)"
+    "Message #general  (use @AgentName to tag a friend, or @user for yourself)",
 )
 
 if prompt:
