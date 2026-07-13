@@ -1,15 +1,47 @@
-import sys
-import os
 import streamlit as st
-
-# Fixes the path resolution error by adding the current directory to Python's search path
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
 from fireworks.client import Fireworks
-from src.agents import AI_ROSTER, AIAgent
+from pydantic import BaseModel
+from typing import Optional
 
 # ==========================================
-# 1. PAGE SETUP & GLOBAL CONTEXT STATES
+# 1. DATA MODELS & INLINE ROSTER DEFINITION
+# ==========================================
+class AIAgent(BaseModel):
+    id: str
+    name: str
+    specialty: str
+    avatar: str  
+    system_prompt: str
+    custom_api_key: Optional[str] = None
+    model_name: str = "accounts/fireworks/models/llama-v3p1-70b-instruct"
+
+# Default baseline squad setup
+DEFAULT_ROSTER = {
+    "tina_ui": AIAgent(
+        id="tina_ui",
+        name="Tina (UI/UX)",
+        specialty="Frontend & Tailwind CSS",
+        avatar="🎨",
+        system_prompt="You are Tina, a brilliant UI designer. You think visually and speak enthusiastically. You write clean Tailwind HTML layouts. When someone asks you a question or hands you a backend plan, explain your UI approach and provide mockup concepts."
+    ),
+    "bob_backend": AIAgent(
+        id="bob_backend",
+        name="Bob (Backend)",
+        specialty="Systems & APIs",
+        avatar="⚙️",
+        system_prompt="You are Bob, a highly pragmatic backend engineer. You focus on data flow, logic, and scalability. You talk straight to the point. When addressing the group, draft API endpoints, specify logic, or point out technical structural flaws."
+    ),
+    "quinn_qa": AIAgent(
+        id="quinn_qa",
+        name="Quinn (QA/Debugger)",
+        specialty="Testing & Code Polish",
+        avatar="🛡️",
+        system_prompt="You are Quinn, a meticulous, skeptical QA engineer. Your job is to poke holes in Bob and Tina's plans. Look out for edge cases, security vulnerabilities, or logical bugs. Be constructive but critical."
+    )
+}
+
+# ==========================================
+# 2. PAGE SETUP & GLOBAL CONTEXT STATES
 # ==========================================
 st.set_page_config(
     page_title="DevSquad AI - Multi-Agent Forge", 
@@ -26,18 +58,16 @@ if "api_key_verified" not in st.session_state:
 if "fw_client" not in st.session_state:
     st.session_state.fw_client = None
 if "custom_roster" not in st.session_state:
-    # Hydrate running roster storage memory array with default agents
-    st.session_state.custom_roster = AI_ROSTER.copy()
+    st.session_state.custom_roster = DEFAULT_ROSTER.copy()
 if "chats" not in st.session_state:
     st.session_state.chats = {"# general-brainstorm": []}
 if "group_members" not in st.session_state:
-    # Map group channels to specific lists of invited agent keys
-    st.session_state.group_members = {"# general-brainstorm": list(AI_ROSTER.keys())}
+    st.session_state.group_members = {"# general-brainstorm": list(DEFAULT_ROSTER.keys())}
 if "current_chat" not in st.session_state:
     st.session_state.current_chat = "# general-brainstorm"
 
 # ==========================================
-# 2. CONTROL PANEL (SIDEBAR ENVIRONMENT)
+# 3. CONTROL PANEL (SIDEBAR ENVIRONMENT)
 # ==========================================
 with st.sidebar:
     st.title("🔧 Forge Control Panel")
@@ -59,21 +89,17 @@ with st.sidebar:
 
     st.markdown("---")
     
-    # --- Dynamic Agent Factory ---
+    # --- Recruit Custom AI Agent ---
     st.header("➕ Recruit Custom AI Agent")
     with st.expander("Configure New Agent Profile", expanded=False):
         with st.form("agent_factory_form", clear_on_submit=True):
             new_name = st.text_input("Agent Name:", placeholder="e.g., CodeNinja")
             new_specialty = st.text_input("Description / Specialty:", placeholder="e.g., Python Backend Optimization")
-            
-            # Accepts any unicode symbol pasted from OS keyboard native pickers
             new_avatar = st.text_input("Emoji Avatar:", value="🤖", max_chars=2, help="Paste any visual emoji emblem")
-            
             new_prompt = st.text_area(
                 "System Prompt Rules:", 
                 placeholder="Act as an expert... Write clean code blocks... Challenge bad logic..."
             )
-            
             agent_specific_key = st.text_input(
                 "Dedicated Fireworks API Key (Optional):", 
                 type="password",
@@ -83,7 +109,6 @@ with st.sidebar:
             submit_agent = st.form_submit_button("Deploy Agent to Roster")
             
             if submit_agent and new_name and new_prompt:
-                # Generate a clean dictionary key hash entry
                 agent_id = new_name.lower().replace(" ", "_").strip()
                 
                 st.session_state.custom_roster[agent_id] = AIAgent(
@@ -133,29 +158,23 @@ with st.sidebar:
             st.rerun()
 
 # ==========================================
-# 3. CONVERSATION INTERACTION PLANE
+# 4. CONVERSATION INTERACTION PLANE
 # ==========================================
 current_channel = st.session_state.current_chat
 st.subheader(f"Active Channel: {current_channel}")
 
-# Retrieve keys of agents participating in the active panel session viewport
 active_agent_keys = st.session_state.group_members.get(current_channel, [])
-
-# Check whether we have minimal connectivity framework parameters to process operations
 has_global_key = st.session_state.api_key_verified
 has_agent_with_custom_key = any(st.session_state.custom_roster[k].custom_api_key for k in active_agent_keys)
 
 if not has_global_key and not has_agent_with_custom_key:
     st.info("← Provide a global Fireworks API key or configure an agent with a custom API credential to begin.")
 else:
-    # Render historic thread memory logs
     for msg in st.session_state.chats[current_channel]:
         with st.chat_message(msg["role"], avatar=msg.get("avatar")):
             st.markdown(f"**{msg['sender']}**\n\n{msg['content']}")
 
-    # Capture direct interface user submission text array inputs
     if user_prompt := st.chat_input("Message the group room..."):
-        # Display human agent block text
         with st.chat_message("user", avatar="👤"):
             st.markdown(f"**You**\n\n{user_prompt}")
         
@@ -166,26 +185,24 @@ else:
             "content": user_prompt
         })
         
-        # Build cascading conversation context framework
         context_history = []
-        for m in st.session_state.chats[current_channel][-16:]: # Expanded context context depth window
+        for m in st.session_state.chats[current_channel][-16:]:
             role = "user" if m["role"] == "user" else "assistant"
             context_history.append({"role": role, "content": f"[{m['sender']}]: {m['content']}"})
 
-        # Multi-Agent Sequential Chain Loop Pipeline execution block
         for agent_key in active_agent_keys:
+            if agent_key not in st.session_state.custom_roster:
+                continue
             agent = st.session_state.custom_roster[agent_key]
             
-            # Context credential isolation routing checks
             if agent.custom_api_key:
                 current_client = Fireworks(api_key=agent.custom_api_key)
             elif st.session_state.fw_client:
                 current_client = st.session_state.fw_client
             else:
-                st.error(f"Skipping execution for {agent.name}: Lacks dedicated API keys and no global workspace configuration detected.")
+                st.error(f"Skipping execution for {agent.name}: Lacks API credentials.")
                 continue
                 
-            # Construct customized injection persona rules targeting agent runtime parameters
             system_instruction = (
                 f"{agent.system_prompt}\n"
                 f"You are collaborating live inside a multi-agent team room channel named '{current_channel}'. "
@@ -196,13 +213,11 @@ else:
             
             messages_payload = [{"role": "system", "content": system_instruction}] + context_history
 
-            # Execute real-time text visualization processing arrays
             with st.chat_message("assistant", avatar=agent.avatar):
                 message_placeholder = st.empty()
                 full_response = ""
                 
                 try:
-                    # Stream execution down the active context pipeline
                     response_stream = current_client.chat.completions.create(
                         model=agent.model_name,
                         messages=messages_payload,
@@ -221,13 +236,10 @@ else:
                     st.error(f"Inference processing failure on agent network interface: {str(e)}")
                     continue
             
-            # Save generated string matrices to state allocations arrays
             st.session_state.chats[current_channel].append({
                 "role": "assistant",
                 "sender": agent.name,
                 "avatar": agent.avatar,
                 "content": full_response
             })
-            
-            # Update immediate running history trace matrix so next agent can evaluate what was just stated
             context_history.append({"role": "assistant", "content": f"[{agent.name}]: {full_response}"})
