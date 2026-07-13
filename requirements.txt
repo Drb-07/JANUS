@@ -1,4 +1,2 @@
-streamlit>=1.35.0
-fireworks-ai>=0.14.0
-pydantic>=2.0
-google-genai>=0.1.0
+streamlit>=1.38.0
+requests>=2.31.0
