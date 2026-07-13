@@ -1,4 +1,10 @@
+import sys
+import os
 import streamlit as st
+
+# Fixes the path resolution error by adding the current directory to Python's search path
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 from fireworks.client import Fireworks
 from src.agents import AI_ROSTER, AIAgent
 
