@@ -1,183 +1,236 @@
+"""
+AI-GC — AI Group Chat
+======================
+Discord, but every "friend" in the server is an AI agent powered by Fireworks AI.
+
+Add agents with a name + a Fireworks model link + an API key, invite them into
+the channel, then talk to them (and watch them talk to each other) using
+@mentions, exactly like a Discord server.
+"""
+
 import streamlit as st
-import os
-from google import genai
-from google.genai import types
-# For Fireworks AI, we use the standard openai library protocol
-from openai import OpenAI
 
-st.set_page_config(page_title="Multi-Agent Chatroom", layout="wide")
+from src.agents import Agent, make_agent, PERSONA_PRESETS
+from src.engine import route_user_message
 
-# 1. INITIALIZE SYSTEM STATE MEMORY
+st.set_page_config(
+    page_title="AI-GC · AI Group Chat",
+    page_icon="🎮",
+    layout="wide",
+)
+
+# --------------------------------------------------------------------------
+# Session state bootstrap
+# --------------------------------------------------------------------------
 if "agents" not in st.session_state:
-    st.session_state.agents = {}
-if "groups" not in st.session_state:
-    st.session_state.groups = {}
-if "chat_histories" not in st.session_state:
-    st.session_state.chat_histories = {}
-if "active_group" not in st.session_state:
-    st.session_state.active_group = None
+    st.session_state.agents: list[Agent] = []
 
-# --- SIDEBAR CONTROL PANEL ---
+if "messages" not in st.session_state:
+    st.session_state.messages: list[dict] = [
+        {
+            "role": "system",
+            "name": "system",
+            "content": (
+                "Welcome to AI-GC! Add your first agent from the sidebar, then "
+                "say hi with @mentions to start the conversation."
+            ),
+        }
+    ]
+
+if "invited" not in st.session_state:
+    # agents currently "in the channel" (invited); lets you keep agents
+    # defined but not part of every chat
+    st.session_state.invited: set[str] = set()
+
+
+# --------------------------------------------------------------------------
+# Minimal Discord-flavored CSS on top of the dark theme in .streamlit/config.toml
+# --------------------------------------------------------------------------
+st.markdown(
+    """
+    <style>
+    .chat-bubble {
+        border-radius: 8px;
+        padding: 10px 14px;
+        margin-bottom: 10px;
+        max-width: 100%;
+    }
+    .chat-name {
+        font-weight: 700;
+        margin-right: 8px;
+    }
+    .chat-meta {
+        color: #949BA4;
+        font-size: 0.75rem;
+    }
+    .avatar {
+        display: inline-block;
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        text-align: center;
+        line-height: 32px;
+        font-weight: 700;
+        color: white;
+        margin-right: 8px;
+    }
+    .server-pill {
+        background-color: #2B2D31;
+        border-radius: 8px;
+        padding: 8px 10px;
+        margin-bottom: 6px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+def agent_by_name(name: str) -> Agent | None:
+    for a in st.session_state.agents:
+        if a.name == name:
+            return a
+    return None
+
+
+# --------------------------------------------------------------------------
+# Sidebar — server member list + "Add Agent" form
+# --------------------------------------------------------------------------
 with st.sidebar:
-    st.title("🤖 Orchestration Control")
-    st.markdown("---")
-    
-    # SECTION A: RECRUIT / REGISTER CUSTOM AI AGENT
-    st.subheader("➕ Recruit Custom AI Agent")
-    
-    with st.form("agent_creation_form", clear_on_submit=True):
-        agent_name = st.text_input("Agent Name", placeholder="e.g., gemini, tech-expert")
-        
-        # Provider selection with Fireworks on top by default
-        provider = st.selectbox("AI Provider Platform", ["Fireworks AI", "Gemini"])
-        api_key = st.text_input("Provider API Key", type="password", placeholder="AIzaSy... or fw_...")
-        
-        system_prompt = st.text_area(
-            "System Behavior Prompt", 
-            value="You are a helpful AI assistant in a collaborative group chat environment."
+    st.markdown("## 🎮 AI-GC")
+    st.caption("Your AI friends group chat, powered by Fireworks AI")
+
+    st.divider()
+    st.markdown("### ➕ Add a new agent")
+
+    with st.form("add_agent_form", clear_on_submit=True):
+        name = st.text_input("Name", placeholder="e.g. Nova")
+        model = st.text_input(
+            "Fireworks model link / id",
+            placeholder="accounts/fireworks/models/llama-v3p1-70b-instruct",
+            help="Any Fireworks AI chat-completions model id.",
         )
-        
-        submit_agent = st.form_submit_button("Deploy Agent to Roster")
-        
-        if submit_agent:
-            if not agent_name or not api_key:
-                st.error("❌ Both Agent Name and its corresponding API Key are strictly required.")
-            else:
-                # Add to memory roster
-                st.session_state.agents[agent_name] = {
-                    "name": agent_name,
-                    "provider": provider,
-                    "api_key": api_key,
-                    "system_prompt": system_prompt
-                }
-                st.success(f"✔️ Registered agent '{agent_name}' via {provider}!")
+        api_key = st.text_input(
+            "Fireworks API key", type="password", placeholder="fw_..."
+        )
+        preset = st.selectbox(
+            "Persona starting point (optional)",
+            ["Custom"] + list(PERSONA_PRESETS.keys()),
+        )
+        persona_default = "" if preset == "Custom" else PERSONA_PRESETS[preset]
+        persona = st.text_area(
+            "Persona / system prompt",
+            value=persona_default,
+            placeholder="Describe who this agent is and how they should behave...",
+            height=90,
+        )
+        submitted = st.form_submit_button("Add friend", use_container_width=True)
 
-    st.markdown("---")
-    
-    # SECTION B: CREATE A NEW GROUP CHAT
-    st.subheader("💬 Establish Group Chat Room")
-    with st.form("group_creation_form", clear_on_submit=True):
-        group_name = st.text_input("Group Chat Name", placeholder="e.g., dev-team, main-room")
-        
-        # Select multiple agents registered in our system state
-        available_agents = list(st.session_state.agents.keys())
-        selected_agents = st.multiselect("Invite Agents to Room", options=available_agents)
-        
-        submit_group = st.form_submit_button("Launch Channel")
-        
-        if submit_group:
-            if not group_name:
-                st.error("❌ A unique group room name must be provided.")
-            elif not selected_agents:
-                st.error("❌ Invite at least one AI agent to make it a group chat.")
-            else:
-                st.session_state.groups[group_name] = selected_agents
-                # Initialize empty message log for this specific room
-                st.session_state.chat_histories[group_name] = []
-                st.session_state.active_group = group_name
-                st.success(f"🚀 Group channel '#{group_name}' launched!")
+        if submitted:
+            try:
+                agent = make_agent(name, model, api_key, persona)
+                if agent_by_name(agent.name):
+                    st.error(f"An agent named '{agent.name}' already exists.")
+                else:
+                    st.session_state.agents.append(agent)
+                    st.session_state.invited.add(agent.id)
+                    st.success(f"{agent.name} added and invited to the channel!")
+            except ValueError as e:
+                st.error(str(e))
 
-    st.markdown("---")
-    
-    # SECTION C: ACTIVE CHANNELS LIST
-    st.subheader("📋 Available Channels")
-    if st.session_state.groups:
-        for g_name in st.session_state.groups.keys():
-            # Bold highlight the active channel button
-            label = f"💬 #{g_name}" if g_name != st.session_state.active_group else f"🔥 #{g_name} (Active)"
-            if st.button(label, key=f"nav_{g_name}", use_container_width=True):
-                st.session_state.active_group = g_name
-                st.rerun()
+    st.divider()
+    st.markdown("### 👥 Server members")
+
+    if not st.session_state.agents:
+        st.caption("No agents yet — add one above.")
     else:
-        st.info("No active channels. Deploy an agent and launch a group chat room above.")
+        for a in st.session_state.agents:
+            invited = a.id in st.session_state.invited
+            cols = st.columns([1, 4, 2])
+            with cols[0]:
+                st.markdown(
+                    f"<div class='avatar' style='background:{a.color}'>{a.avatar}</div>",
+                    unsafe_allow_html=True,
+                )
+            with cols[1]:
+                st.markdown(f"**@{a.name}**")
+                st.caption(a.model)
+            with cols[2]:
+                if invited:
+                    if st.button("Remove", key=f"kick_{a.id}"):
+                        st.session_state.invited.discard(a.id)
+                        st.rerun()
+                else:
+                    if st.button("Invite", key=f"invite_{a.id}"):
+                        st.session_state.invited.add(a.id)
+                        st.rerun()
 
-# --- MAIN CONVERSATION INTERFACE ---
-st.title("⚡ Multi-Agent Collaborative Workbench")
+    st.divider()
+    if st.button("🗑️ Clear chat history", use_container_width=True):
+        st.session_state.messages = st.session_state.messages[:1]
+        st.rerun()
 
-if not st.session_state.active_group:
-    st.info("👋 Welcome! Use the sidebar to add your AI agents and create a new group chat channel to begin.")
-else:
-    active_room = st.session_state.active_group
-    invited_bots = st.session_state.groups[active_room]
-    
-    st.markdown(f"### Current Channel: `#{active_room}`")
-    st.caption(f"**Active AI Cast Members inside this room:** {', '.join([f'`{b}`' for b in invited_bots])}")
-    
-    # 1. RENDER CURRENT CHAT HISTORY LOGS
-    for msg in st.session_state.chat_histories[active_room]:
-        with st.chat_message(msg["role"]):
-            st.markdown(f"**{msg['author']}:** {msg['content']}")
-            
-    # 2. CAPTURE USER ENTRY INPUT WIDGET
-    if user_prompt := st.chat_input(f"Send a message to #{active_room}..."):
-        
-        # Display and record user message immediately
-        with st.chat_message("user"):
-            st.markdown(f"**User:** {user_prompt}")
-        st.session_state.chat_histories[active_room].append({
-            "role": "user",
-            "author": "User",
-            "content": user_prompt
-        })
-        
-        # Compile contextual string of the history log up to this point
-        def build_history_context(history_list):
-            context = ""
-            for m in history_list:
-                context += f"{m['author']}: {m['content']}\n"
-            return context
 
-        # 3. CASCADE LOOP EXECUTION FOR ACTIVE AGENTS IN THE ROOM
-        for agent_id in invited_bots:
-            agent = st.session_state.agents[agent_id]
-            current_context = build_history_context(st.session_state.chat_histories[active_room])
-            
-            # Open up a dedicated rendering layout window block for the specific AI responder
-            with st.chat_message("assistant"):
-                message_placeholder = st.empty()
-                message_placeholder.markdown(f"🤖 *{agent['name']} is synthesizing context...*")
-                
-                try:
-                    # ROUTE TO GOOGLE GENAI SERVERS
-                    if agent["provider"] == "Gemini":
-                        client = genai.Client(api_key=agent["api_key"])
-                        config = types.GenerateContentConfig(
-                            system_instruction=agent["system_prompt"],
-                            temperature=0.7
-                        )
-                        response = client.models.generate_content(
-                            model='gemini-2.5-flash',
-                            contents=current_context,
-                            config=config
-                        )
-                        ai_reply = response.text
-                    
-                    # ROUTE TO FIREWORKS AI SERVERS
-                    elif agent["provider"] == "Fireworks AI":
-                        # Fireworks adheres to standard OpenAI API construction
-                        client = OpenAI(
-                            base_url="https://api.fireworks.ai/inference/v1",
-                            api_key=agent["api_key"]
-                        )
-                        response = client.chat.completions.create(
-                            model="accounts/fireworks/models/llama-v3p1-8b-instruct",
-                            messages=[
-                                {"role": "system", "content": agent["system_prompt"]},
-                                {"role": "user", "content": current_context}
-                            ],
-                            temperature=0.7
-                        )
-                        ai_reply = response.choices[0].message.content
-                        
-                except Exception as e:
-                    ai_reply = f"⚠️ Connection operational error via {agent['provider']}: {str(e)}"
-                
-                # Render the resulting string cleanly on screen
-                message_placeholder.markdown(f"**{agent['name']}:** {ai_reply}")
-                
-            # Permanently record the text into history before looping onto the next bot
-            st.session_state.chat_histories[active_room].append({
-                "role": "assistant",
-                "author": agent["name"],
-                "content": ai_reply
-            })
+# --------------------------------------------------------------------------
+# Main channel view
+# --------------------------------------------------------------------------
+active_agents = [a for a in st.session_state.agents if a.id in st.session_state.invited]
+
+st.markdown("### #general")
+mention_hint = "  ·  ".join(f"@{a.name}" for a in active_agents) or "no agents invited yet"
+st.caption(f"Members in channel: @user  ·  {mention_hint}")
+
+chat_container = st.container(height=520)
+with chat_container:
+    for m in st.session_state.messages:
+        if m["role"] == "system":
+            st.info(m["content"])
+            continue
+
+        if m["role"] == "user":
+            avatar_html = "<div class='avatar' style='background:#5865F2'>🧑</div>"
+            display_name = "You"
+            bg = "#2B2D31"
+        else:
+            agent = agent_by_name(m["name"])
+            color = agent.color if agent else "#5865F2"
+            glyph = agent.avatar if agent else "🤖"
+            avatar_html = f"<div class='avatar' style='background:{color}'>{glyph}</div>"
+            display_name = m["name"]
+            bg = "#383A40"
+
+        st.markdown(
+            f"""
+            <div style="display:flex; align-items:flex-start;">
+                {avatar_html}
+                <div class="chat-bubble" style="background:{bg}; flex:1;">
+                    <span class="chat-name">{display_name}</span>
+                    <div>{m['content']}</div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+# --------------------------------------------------------------------------
+# Message input
+# --------------------------------------------------------------------------
+prompt = st.chat_input(
+    "Message #general  (use @AgentName to tag a friend, or @user for yourself)"
+)
+
+if prompt:
+    if not active_agents:
+        st.session_state.messages.append({"role": "user", "name": "user", "content": prompt})
+        st.session_state.messages.append(
+            {
+                "role": "system",
+                "name": "system",
+                "content": "No agents are currently invited to the channel — invite one from the sidebar first.",
+            }
+        )
+        st.rerun()
+    else:
+        with st.spinner("Waiting for replies..."):
+            route_user_message(prompt, active_agents, st.session_state.messages)
+        st.rerun()
